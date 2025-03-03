@@ -1,6 +1,11 @@
 import sys, random, enum, ast, time, csv
+from dataclasses import dataclass
+from typing import Optional, Dict
+
 import numpy as np
 from matrx import grid_world
+from numpy.ma.extras import dstack
+
 from brains1.ArtificialBrain import ArtificialBrain
 from actions1.CustomActions import *
 from matrx import utils
@@ -37,6 +42,18 @@ class Phase(enum.Enum):
     REMOVE_OBSTACLE_IF_NEEDED = 18,
     ENTER_ROOM = 19
 
+@dataclass
+class Objective:
+
+    action: str
+
+    start_time: int
+
+    area : Optional[int]= None
+
+    person : Optional[int] = None
+
+    end_time: Optional[int] = None
 
 class BaselineAgent(ArtificialBrain):
     def __init__(self, slowdown, condition, name, folder):
@@ -74,6 +91,11 @@ class BaselineAgent(ArtificialBrain):
         self._received_messages = []
         self._moving = False
 
+        # idle time
+        self.idle_since = 0
+
+        self._objectiveHistory: dict[str, list[Objective]] = {} # Group by possible action
+
     def initialize(self):
         # Initialization of the state tracker and navigation algorithm
         self._state_tracker = StateTracker(agent_id=self.agent_id)
@@ -84,7 +106,7 @@ class BaselineAgent(ArtificialBrain):
         # Filtering of the world state before deciding on an action 
         return state
 
-    def decide_on_actions(self, state):
+    def decide_on_actions(self, state): # TODO: Extend: How to act based on willingness and competence
         # Identify team members
         agent_name = state[self.agent_id]['obj_id']
         for member in state['World']['team_members']:
@@ -99,7 +121,7 @@ class BaselineAgent(ArtificialBrain):
         self._process_messages(state, self._team_members, self._condition)
         # Initialize and update trust beliefs for team members
         trustBeliefs = self._loadBelief(self._team_members, self._folder)
-        self._trustBelief(self._team_members, trustBeliefs, self._folder, self._received_messages)
+        self._trustBelief(self._tick, self._team_members, trustBeliefs, self._folder, self._received_messages)
 
         # Check whether human is close in distance
         if state[{'is_human_agent': True}]:
@@ -934,18 +956,88 @@ class BaselineAgent(ArtificialBrain):
                     trustBeliefs[self._human_name] = {'competence': competence, 'willingness': willingness}
         return trustBeliefs
 
-    def _trustBelief(self, members, trustBeliefs, folder, receivedMessages):
+    def _trustBelief(self, tick, members, trustBeliefs, folder, receivedMessages): # TODO: Extend: how to change competence and belief?
         '''
         Baseline implementation of a trust belief. Creates a dictionary with trust belief scores for each team member, for example based on the received messages.
         '''
-        # Update the trust value based on for example the received messages
+        agent_beliefs = trustBeliefs[self._human_name]
+
+
         for message in receivedMessages:
             # Increase agent trust in a team member that rescued a victim
-            if 'Collect' in message:
-                trustBeliefs[self._human_name]['competence'] += 0.10
-                # Restrict the competence belief to a range of -1 to 1
-                trustBeliefs[self._human_name]['competence'] = np.clip(trustBeliefs[self._human_name]['competence'], -1,
-                                                                       1)
+            action_type = message.split(":")[0]
+
+            if action_type in ['Search', 'Collect', 'Found']:
+                area = message[-1]
+
+                self._objectiveHistory.get(action_type, []).append(Objective(action = action_type, start_time = tick, area = area))
+
+                # Log search goal
+                if 'Search' in message:
+                     agent_beliefs['willingness'] += 0.05
+
+                # Log found event
+                if "Found" in message:
+                    if area in self._objectiveHistory.get('Search'):
+                        agent_beliefs['competence'] += 0.1
+                    else:
+                        agent_beliefs['competence'] -= 0.1
+
+                # Log collect goal
+                if 'Collect' in message:
+                    if area in self._objectiveHistory.get('Found'):
+                        agent_beliefs['competence'] += 0.1
+                    else:
+                        agent_beliefs['competence'] -= 0.1
+
+            # Log goal for Remove together and Rescue together
+            if 'together' in action_type:
+                agent_beliefs['willingness'] += 0.2
+                self._objectiveHistory[action_type].append(Objective(action = action_type ,start_time = tick, person=self._recentVic))
+
+            # Log alone goal
+            if 'alone' in action_type:
+                agent_beliefs['willingness'] -= 0.2
+
+            # Log message to ask for help when removing
+            if action_type == 'Help remove':
+                agent_beliefs['willingness'] += 0.1
+
+            # Decrease willingness slightly when asking to continue
+            if action_type == 'Continue':
+                agent_beliefs['willingness'] -= 0.05
+
+        # Remove event
+        if self._remove:
+            for objective in self._objectiveHistory.get('Remove together'):
+                if objective.end_time is None:
+                    objective.end_time = tick
+                    if tick - objective.end_time < self._calculate_threshold(agent_beliefs, 'remove'):
+                        agent_beliefs['competence'] += 0.1
+                    else:
+                        agent_beliefs['competence'] -= 0.1
+
+        # Rescue event
+        if self._rescue:
+            for objective in self._objectiveHistory.get('Rescue together'):
+                if objective.end_time is None:
+                    objective.end_time = tick
+                    if tick - objective.end_time < self._calculate_threshold(agent_beliefs, 'rescue'):
+                        agent_beliefs['competence'] += 0.4 if (
+                                    self._goal_vic is not None and "critical" in self._goal_vic) else 0.2
+                    else:
+                        agent_beliefs['competence'] -= 0.4 if (
+                                    self._goal_vic is not None and "critical" in self._goal_vic) else 0.2
+
+        # If all rooms have been searched but not all victims rescued -> human lies -> willingness goes down
+        if self._searched_rooms == self._to_search and len(self._found_victims) < 8:
+            trustBeliefs[self._human_name]['willingness'] -= 0.5
+
+
+        # Restrict the competence and willingness belief to a range of -1 to 1
+        trustBeliefs[self._human_name]['willingness'] = np.clip(trustBeliefs[self._human_name]['willingness'], -1, 1)
+        trustBeliefs[self._human_name]['competence'] = np.clip(trustBeliefs[self._human_name]['competence'], -1, 1)
+
         # Save current trust belief values so we can later use and retrieve them to add to a csv file with all the logged trust belief values
         with open(folder + '/beliefs/currentTrustBelief.csv', mode='w') as csv_file:
             csv_writer = csv.writer(csv_file, delimiter=';', quotechar='"', quoting=csv.QUOTE_MINIMAL)
@@ -953,7 +1045,35 @@ class BaselineAgent(ArtificialBrain):
             csv_writer.writerow([self._human_name, trustBeliefs[self._human_name]['competence'],
                                  trustBeliefs[self._human_name]['willingness']])
 
+
+        trustBeliefs[self._human_name] = agent_beliefs
+
+        print("Tick: " +  str(tick) + " " + str(agent_beliefs))
         return trustBeliefs
+
+    def _calculate_threshold(self, beliefs: dict[str, int], action: str): # TODO: Update
+        """
+        Calculates the dynamic threshold to complete an action
+        """
+        threshold = 60 # Base number of ticks
+        distances = {
+            'close': 0, # 0 seconds
+            'medium': 5, # 0.5 second
+            'far': 10 # 1 second
+        }
+
+        threshold += distances[self._distance_human]
+
+        if action == 'rescue':
+            if beliefs['competence'] > 0.1:
+                threshold += 5
+
+
+        if action == 'remove':
+            if beliefs['competence'] > 0.1:
+                threshold += 10
+
+        return threshold
 
     def _send_message(self, mssg, sender):
         '''
