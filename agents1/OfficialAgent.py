@@ -59,7 +59,7 @@ class BaselineAgent(ArtificialBrain):
     def __init__(self, slowdown, condition, name, folder):
         super().__init__(slowdown, condition, name, folder)
         # Initialization of some relevant variables
-        self._tick = None
+        self._tick = 0
         self._slowdown = slowdown
         self._condition = condition
         self._human_name = name
@@ -91,8 +91,11 @@ class BaselineAgent(ArtificialBrain):
         self._received_messages = []
         self._moving = False
 
+        self._atomic_actions = ['Search', 'Collect', 'Found', "Remove"]
+
         # idle time
-        self.idle_since = 0
+        self.idle_since = None
+        self._last_processed_message = 0
 
         self._objectiveHistory: dict[str, list[Objective]] = {} # Group by possible action
 
@@ -107,7 +110,16 @@ class BaselineAgent(ArtificialBrain):
         return state
 
     def decide_on_actions(self, state): # TODO: Extend: How to act based on willingness and competence
+        # Implements timeout for robot
+        # if self._waiting and self.idle_since is None:
+        #     self.idle_since = tick
+        #
+        # if self.idle_since is not None and tick - self.idle_since > self._calculate_timeout():
+        #     print("To much time waiting, continuing with the next task")
+        #     self._waiting = False
+        #     self.idle_since = None
         # Identify team members
+        self._tick += 1
         agent_name = state[self.agent_id]['obj_id']
         for member in state['World']['team_members']:
             if member != agent_name and member not in self._team_members:
@@ -117,11 +129,14 @@ class BaselineAgent(ArtificialBrain):
             for member in self._team_members:
                 if mssg.from_id == member and mssg.content not in self._received_messages:
                     self._received_messages.append(mssg.content)
+
         # Process messages from team members
+        messages_to_process = self._received_messages[self._last_processed_message + 1 :]
         self._process_messages(state, self._team_members, self._condition)
         # Initialize and update trust beliefs for team members
         trustBeliefs = self._loadBelief(self._team_members, self._folder)
-        self._trustBelief(self._tick, self._team_members, trustBeliefs, self._folder, self._received_messages)
+        self._trustBelief(self._tick, self._team_members, trustBeliefs, self._folder, messages_to_process, state)
+        self._last_processed_message = len(self._received_messages) - 1
 
         # Check whether human is close in distance
         if state[{'is_human_agent': True}]:
@@ -482,6 +497,7 @@ class BaselineAgent(ArtificialBrain):
                             -1] == 'Continue' and not self._remove:
                             self._answered = True
                             self._waiting = False
+                            self._remove = False
                             # Add area to the to do list
                             self._to_search.append(self._door['room_name'])
                             self._phase = Phase.FIND_NEXT_GOAL
@@ -886,9 +902,9 @@ class BaselineAgent(ArtificialBrain):
                         self._found_victim_logs[collectVic] = {'room': loc}
                     if collectVic in self._found_victims and self._found_victim_logs[collectVic]['room'] != loc:
                         self._found_victim_logs[collectVic] = {'room': loc}
-                    # Add the victim to the memory of rescued victims when the human's condition is not weak
+                    # Add the victim to the memory of rescued victims when the   human's condition is not weak
                     if condition != 'weak' and collectVic not in self._collected_victims:
-                        self._collected_victims.append(collectVic)
+                        self._collected_victims.append(collectVic) # TODO: Change this
                     # Decide to help the human carry the victim together when the human's condition is weak
                     if condition == 'weak':
                         self._rescue = 'together'
@@ -932,6 +948,14 @@ class BaselineAgent(ArtificialBrain):
         '''
         # Create a dictionary with trust values for all team members
         trustBeliefs = {}
+
+        with open(folder + '/beliefs/currentTrustBelief.csv') as csvfile:
+            reader = csv.reader(csvfile, delimiter=';', quotechar="'")
+            for row in reader:
+                if row and row[0] == self._human_name:
+                    trustBeliefs[row[0]] = {'competence': float(row[1]), 'willingness': float(row[2])}
+                    return trustBeliefs
+
         # Set a default starting trust value
         default = 0.5
         trustfile_header = []
@@ -956,70 +980,104 @@ class BaselineAgent(ArtificialBrain):
                     trustBeliefs[self._human_name] = {'competence': competence, 'willingness': willingness}
         return trustBeliefs
 
-    def _trustBelief(self, tick, members, trustBeliefs, folder, receivedMessages): # TODO: Extend: how to change competence and belief?
+    def _trustBelief(self, tick, members, trustBeliefs, folder, receivedMessages, state): # TODO: Extend: how to change competence and belief?
         '''
         Baseline implementation of a trust belief. Creates a dictionary with trust belief scores for each team member, for example based on the received messages.
         '''
+
         agent_beliefs = trustBeliefs[self._human_name]
-
-
+        all_rooms = state.get_all_room_names().remove('world_bounds')
+        print("Idle since: "+ str(self.idle_since))
+        print("Rescue:" + str(self._rescue))
+        print("Remove:" + str(self._remove))
+        print("Waiting: " + str(self._waiting))
+        print("Found victims" + str(self._found_victims))
+        print("Collected victims" + str(self._collected_victims))
         for message in receivedMessages:
+            print(message)
             # Increase agent trust in a team member that rescued a victim
             action_type = message.split(":")[0]
 
-            if action_type in ['Search', 'Collect', 'Found']:
+            if action_type in self._atomic_actions:
                 area = message[-1]
 
                 self._objectiveHistory.get(action_type, []).append(Objective(action = action_type, start_time = tick, area = area))
-
                 # Log search goal
-                if 'Search' in message:
-                     agent_beliefs['willingness'] += 0.05
+                if action_type == 'Search':
+                    print("Willingness increased since human said he is going to search")
+                    agent_beliefs['willingness'] += 0.05
 
                 # Log found event
-                if "Found" in message:
-                    if area in self._objectiveHistory.get('Search'):
+                if action_type == 'Found':
+                    if area in self._objectiveHistory.get('Search', []):
+                        print("Competence increased since human said found a victim in an area he said he would search")
                         agent_beliefs['competence'] += 0.1
                     else:
+                        print("Competence decreased since human said found in an area he wasn't going to search")
                         agent_beliefs['competence'] -= 0.1
 
                 # Log collect goal
-                if 'Collect' in message:
-                    if area in self._objectiveHistory.get('Found'):
+                if action_type == 'Collect':
+                    if area in self._objectiveHistory.get('Found', []):
+                        print("Competence increased since human said collect a victim in an area he said he found")
                         agent_beliefs['competence'] += 0.1
                     else:
+                        print("Competence decreased since human said collect in an area he wasn't going to search")
                         agent_beliefs['competence'] -= 0.1
 
-            # Log goal for Remove together and Rescue together
-            if 'together' in action_type:
+                    self._objectiveHistory.get(action_type, []).append(
+                        Objective(action="Rescue together", start_time=tick, area=area))
+
+
+                if message == 'Remove': # Start timer for joint removal
+                    self._remove = True
+                    print("Received remove together, _remove=True, log intent, start threshold")
+                    agent_beliefs['willingness'] += 0.2
+                    self._objectiveHistory.setdefault(message, []).append(Objective(action=message, start_time=tick, area=self._human_loc))
+
+            if message == 'Rescue together':
+                self._rescue = 'together'
+                print("Received rescue together, _rescue=True, log intent, start threshold")
                 agent_beliefs['willingness'] += 0.2
-                self._objectiveHistory[action_type].append(Objective(action = action_type ,start_time = tick, person=self._recentVic))
+                self._objectiveHistory.setdefault(message, []).append(
+                    Objective(action=message, start_time=tick, area=self._agent_loc, person=self._recent_vic))
 
             # Log alone goal
             if 'alone' in action_type:
+                print("Decrease willingness because alone")
                 agent_beliefs['willingness'] -= 0.2
 
             # Log message to ask for help when removing
             if action_type == 'Help remove':
+                print("Increase willingness because together")
                 agent_beliefs['willingness'] += 0.1
 
             # Decrease willingness slightly when asking to continue
             if action_type == 'Continue':
+                print("Decrease willingness because continue")
                 agent_beliefs['willingness'] -= 0.05
 
-        # Remove event
-        if self._remove:
-            for objective in self._objectiveHistory.get('Remove together'):
+        # Joint Removal event asked from the Robot's side
+        if not self._remove:
+            print("Remove action being logged: ", self._objectiveHistory.get('Remove', []))
+            for objective in self._objectiveHistory.get('Remove', []):
                 if objective.end_time is None:
+                    print("Set end time")
                     objective.end_time = tick
-                    if tick - objective.end_time < self._calculate_threshold(agent_beliefs, 'remove'):
+                    threshold = self._calculate_threshold(agent_beliefs, 'remove', True)
+                    print("Threshold defined as: ", threshold)
+                    print("Actual time: ", objective.end_time - objective.start_time)
+                    if objective.end_time - objective.start_time < threshold:
                         agent_beliefs['competence'] += 0.1
+                        print("Increase competence")
                     else:
                         agent_beliefs['competence'] -= 0.1
+                        print("Decrease competence")
 
-        # Rescue event
-        if self._rescue:
-            for objective in self._objectiveHistory.get('Rescue together'):
+        # Joint Rescue event asked from the Robot's side
+        if self._rescue != 'together': # self.rescue can be together or alone, only works when robot finds a victim and asks for help OR when you ask for the robots help to rescue a victim
+
+            for objective in self._objectiveHistory.get('Rescue together', []):
                 if objective.end_time is None:
                     objective.end_time = tick
                     if tick - objective.end_time < self._calculate_threshold(agent_beliefs, 'rescue'):
@@ -1030,7 +1088,8 @@ class BaselineAgent(ArtificialBrain):
                                     self._goal_vic is not None and "critical" in self._goal_vic) else 0.2
 
         # If all rooms have been searched but not all victims rescued -> human lies -> willingness goes down
-        if self._searched_rooms == self._to_search and len(self._found_victims) < 8:
+        if self._searched_rooms == all_rooms and len(self._found_victims) < 8:
+            print("all rooms have been searched but not all victims rescued -> human lies -> willingness goes down")
             trustBeliefs[self._human_name]['willingness'] -= 0.5
 
 
@@ -1049,20 +1108,22 @@ class BaselineAgent(ArtificialBrain):
         trustBeliefs[self._human_name] = agent_beliefs
 
         print("Tick: " +  str(tick) + " " + str(agent_beliefs))
+        print("Rescue action being logged: ", self._objectiveHistory.get("Rescue together", []))
         return trustBeliefs
 
-    def _calculate_threshold(self, beliefs: dict[str, int], action: str): # TODO: Update
+    def _calculate_threshold(self, beliefs: dict[str, int], action: str, distance: bool = False): # TODO: Update
         """
         Calculates the dynamic threshold to complete an action
         """
         threshold = 60 # Base number of ticks
         distances = {
-            'close': 0, # 0 seconds
-            'medium': 5, # 0.5 second
-            'far': 10 # 1 second
+            'close': 30, # +3 seconds
+            'medium': 60, # +6 seconds
+            'far': 80 # +8 seconds
         }
 
-        threshold += distances[self._distance_human]
+        if distance:
+            threshold += distances[self._distance_human]
 
         if action == 'rescue':
             if beliefs['competence'] > 0.1:
@@ -1074,6 +1135,12 @@ class BaselineAgent(ArtificialBrain):
                 threshold += 10
 
         return threshold
+
+    def _calculate_timeout(self): # TODO: DO
+        """
+        Calculates the timeout for the robot to stop waiting
+        """
+        return 100
 
     def _send_message(self, mssg, sender):
         '''
@@ -1122,3 +1189,16 @@ class BaselineAgent(ArtificialBrain):
             else:
                 locs.append((x[i], max(y)))
         return locs
+
+
+"""
+TODO list:
+- (DONE) FInd out when self.rescue is activated and update if statement
+- (Semi-Done) Do not directly append to rescued victim, do so only based on trust
+- (Semi-Done) Implement robot timeout
+- Update decide_on_actions func
+- Logging functions for graphs (number of actions, competence, willingness...)
+- If you tell robot there is somebody in an area but not found later
+- Set default values and set adjusted values
+- Dynamic threshold depending on rock type
+"""
