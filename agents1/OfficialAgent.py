@@ -98,6 +98,9 @@ class BaselineAgent(ArtificialBrain):
 
         self._atomic_actions = ['Search', 'Collect', 'Found', "Remove"]
 
+        self._aid_remove = False
+        self._aid_rescue = False
+
         # idle time
         self.idle_since = None
         self._last_processed_message = 0
@@ -463,7 +466,6 @@ class BaselineAgent(ArtificialBrain):
                                 return None, {}
                         # Remain idle until the human communicates what to do with the identified obstacle
                         else:
-                            print(self.received_messages_content)
                             if self.idle_since is not None and self._tick - self.idle_since > self._calculate_timeout(
                                     self._loadBelief(self._team_members, self._folder)):
                                 print("TIMEOUT OVER")
@@ -584,6 +586,8 @@ class BaselineAgent(ArtificialBrain):
                     self._answered = False
                     self._remove = False
                     self._waiting = False
+                    self.idle_since = None
+                    self._aid_remove = False
                     self._phase = Phase.ENTER_ROOM
 
             if Phase.ENTER_ROOM == self._phase:
@@ -778,7 +782,6 @@ class BaselineAgent(ArtificialBrain):
                 return Idle.__name__, {'duration_in_ticks': 25}
 
             if Phase.PLAN_PATH_TO_VICTIM == self._phase:
-                print("Line 811")
                 # Plan the path to a found victim using its location
                 self._navigator.reset_full()
                 self._navigator.add_waypoints([self._found_victim_logs[self._goal_vic]['location']])
@@ -786,7 +789,6 @@ class BaselineAgent(ArtificialBrain):
                 self._phase = Phase.FOLLOW_PATH_TO_VICTIM
 
             if Phase.FOLLOW_PATH_TO_VICTIM == self._phase: # Independent of trust
-                print("Line 819")
                 # Start searching for other victims if the human already rescued the target victim
                 if self._goal_vic and self._goal_vic in self._collected_victims:
                     self._phase = Phase.FIND_NEXT_GOAL
@@ -802,7 +804,6 @@ class BaselineAgent(ArtificialBrain):
                     self._phase = Phase.TAKE_VICTIM
 
             if Phase.TAKE_VICTIM == self._phase: # Independent of trust
-                print("Line 836")
                 # Store all area tiles in a list
                 room_tiles = [info['location'] for info in state.values()
                              if 'class_inheritance' in info
@@ -840,7 +841,7 @@ class BaselineAgent(ArtificialBrain):
                                     self._send_message('Timeout exceeded, I will carry the victim myself', 'RescueBot')
                                     break
                                 else:
-                                    self._todo.append(self._recent_vic)
+                                    self._todo.append(self._recent_vic) # TODO: FIX
                                     self._recent_vic = None
                                     self._phase = Phase.FIND_NEXT_GOAL
                                     self._send_message('Timeout exceeded, I will continue searching', 'RescueBot')
@@ -860,7 +861,6 @@ class BaselineAgent(ArtificialBrain):
                     self._phase = Phase.FIND_NEXT_GOAL
                 # When rescuing mildly injured victims alone, pick the victim up and plan the path to the drop zone
                 if 'mild' in self._goal_vic and self._rescue == 'alone':
-                    print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
                     self._phase = Phase.PLAN_PATH_TO_DROPPOINT
                     if self._goal_vic not in self._collected_victims:
                         self._collected_victims.append(self._goal_vic)
@@ -869,7 +869,6 @@ class BaselineAgent(ArtificialBrain):
                                                   'human_name': self._human_name}
 
             if Phase.PLAN_PATH_TO_DROPPOINT == self._phase:  # Communication: Indepedent of trust
-                print("Line 884")
                 self._navigator.reset_full()
                 # Plan the path to the drop zone
                 self._navigator.add_waypoints([self._goal_loc])
@@ -877,7 +876,6 @@ class BaselineAgent(ArtificialBrain):
                 self._phase = Phase.FOLLOW_PATH_TO_DROPPOINT
 
             if Phase.FOLLOW_PATH_TO_DROPPOINT == self._phase: # Communication: Indepedent of trust
-                print("Line 892")
                 # Communicate that the agent is transporting a mildly injured victim alone to the drop zone
                 if 'mild' in self._goal_vic and self._rescue == 'alone':
                     self._send_message('Transporting ' + self._goal_vic + ' to the drop zone.', 'RescueBot')
@@ -978,7 +976,7 @@ class BaselineAgent(ArtificialBrain):
                         self._found_victim_logs[collectVic] = {'room': loc}
                     # Add the victim to the memory of rescued victims when the   human's condition is not weak
                     if condition != 'weak' and collectVic not in self._collected_victims:
-                        self._collected_victims.append(collectVic) # TODO: Change this
+                        self._collected_victims.append(collectVic) # TODO: Change this ??
                     # Decide to help the human carry the victim together when the human's condition is weak
                     if condition == 'weak':
                         self._rescue = 'together'
@@ -1098,17 +1096,18 @@ class BaselineAgent(ArtificialBrain):
                         Objective(action="Rescue together", start_time=tick, area=area))
 
 
-                if message == 'Remove': # Start timer for joint removal
-                    # self._remove = True
+                if message == 'Remove': # TODO: Do not start timer when telling robot to remove tree
+                    self._aid_remove = True
                     print("Received remove together, _remove=True, log intent, start threshold")
                     agent_beliefs['willingness'] += 0.2
                     self._objectiveHistory.setdefault(message, []).append(Objective(action=message, start_time=tick, area=self._human_loc))
 
-            if message == 'Rescue together':
-                # self._rescue = 'together'
+            if message == 'Rescue together' or message == 'Rescue': # Start time for joint rescue
+                self._aid_rescue = True
+                print(message)
                 print("Received rescue together, _rescue=True, log intent, start threshold")
                 agent_beliefs['willingness'] += 0.2
-                self._objectiveHistory.setdefault(message, []).append(
+                self._objectiveHistory.setdefault('Rescue', []).append(
                     Objective(action=message, start_time=tick, area=self._agent_loc, person=self._recent_vic))
 
             # Log alone goal
@@ -1127,8 +1126,7 @@ class BaselineAgent(ArtificialBrain):
                 agent_beliefs['willingness'] -= 0.05
 
         # Joint Removal event asked from the Robot's side
-        if not self._remove:
-            print("Remove action being logged: ", self._objectiveHistory.get('Remove', []))
+        if not self._aid_remove:
             for objective in self._objectiveHistory.get('Remove', []):
                 if objective.end_time is None:
                     print("Set end time")
@@ -1144,8 +1142,8 @@ class BaselineAgent(ArtificialBrain):
                         print("Decrease competence")
 
         # Joint Rescue event asked from the Robot's side
-        if self._rescue != 'together': # self.rescue can be together or alone, only works when robot finds a victim and asks for help OR when you ask for the robots help to rescue a victim
-            for objective in self._objectiveHistory.get('Rescue together', []):
+        if self._carrying_together: # self.rescue can be together or alone, only works when robot finds a victim and asks for help OR when you ask for the robots help to rescue a victim
+            for objective in self._objectiveHistory.get('Rescue', []):
                 if objective.end_time is None:
                     objective.end_time = tick
                     if tick - objective.end_time < self._calculate_threshold(agent_beliefs, 'rescue'):
@@ -1165,6 +1163,9 @@ class BaselineAgent(ArtificialBrain):
         trustBeliefs[self._human_name]['willingness'] = np.clip(trustBeliefs[self._human_name]['willingness'], -1, 1)
         trustBeliefs[self._human_name]['competence'] = np.clip(trustBeliefs[self._human_name]['competence'], -1, 1)
 
+        print("Rescue action being logged: ", self._objectiveHistory.get('Remove together', []))
+        print("Remove action being logged: ", self._objectiveHistory.get('Remove', []))
+
         # Save current trust belief values so we can later use and retrieve them to add to a csv file with all the logged trust belief values
         with open(folder + '/beliefs/currentTrustBelief.csv', mode='w') as csv_file:
             csv_writer = csv.writer(csv_file, delimiter=';', quotechar='"', quoting=csv.QUOTE_MINIMAL)
@@ -1176,7 +1177,7 @@ class BaselineAgent(ArtificialBrain):
         trustBeliefs[self._human_name] = agent_beliefs
 
         print("Tick: " +  str(tick) + " " + str(agent_beliefs))
-        print("Rescue action being logged: ", self._objectiveHistory.get("Rescue together", []))
+        print("Rescue action being logged: ", self._objectiveHistory.get("Rescue", []))
         return trustBeliefs
 
     def _calculate_threshold(self, beliefs: dict[str, int], action: str, distance: bool = False): # TODO: Update
@@ -1204,12 +1205,21 @@ class BaselineAgent(ArtificialBrain):
 
         return threshold
 
-    def _calculate_timeout(self, trust : dict):
+    def _calculate_timeout(self, trust : dict, distance : bool = True):
         """
         Calculates the timeout for the robot to stop waiting
         """
-        to = 80 + 30 * trust.get(self._human_name).get('willingness')
-        print("Timeout: ", str(to))
+        distances = {
+            'close': 30,  # +3 seconds
+            'medium': 60,  # +6 seconds
+            'far': 80  # +8 seconds
+        }
+
+        to = 100 + 30 * trust.get(self._human_name).get('willingness')
+
+        if distance:
+            to += distances[self._distance_human]
+
         return to
 
     def _send_message(self, mssg, sender):
@@ -1265,11 +1275,15 @@ class BaselineAgent(ArtificialBrain):
 TODO list:
 - (DONE) FInd out when self.rescue is activated and update if statement
 - (Semi-Done) Do not directly append to rescued victim, do so only based on trust
-- (Semi-Done) Implement robot timeout
-- Update decide_on_actions func
 - Logging functions for graphs (number of actions, competence, willingness...)
 - If you tell robot there is somebody in an area but not found later
 - Set default values and set adjusted values
 - Dynamic threshold depending on rock type
 - Have two separate lists based on rooms searched by human and victims collected by human (claimed)
+
+
+
+- Stop threshold???
+- Update actions based on willingness and so on
+- 
 """
