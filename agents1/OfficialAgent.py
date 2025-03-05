@@ -1,5 +1,6 @@
 import sys, random, enum, ast, time, csv
 from dataclasses import dataclass
+from traceback import print_tb
 from typing import Optional, Dict
 
 import numpy as np
@@ -780,27 +781,7 @@ class BaselineAgent(ArtificialBrain):
                 # Remain idle until the human communicates to the agent what to do with the found victim
                 if self.received_messages_content and self._waiting and self.received_messages_content[
                     -1] != 'Rescue' and self.received_messages_content[-1] != 'Continue':
-                    print("Before: " + str(self.idle_since))
-                    self.idle_since = self._tick
-                    print("After: " + str(self.idle_since))
                     return None, {}
-                if self.idle_since is not None and self._tick - self.idle_since > self._calculate_timeout(self._loadBelief(self._team_members, self._folder)):
-                    print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-                    self.idle_since = None
-                    if 'mild' in self._recent_vic:
-                        self._rescue = 'alone'
-                        self._answered = True
-                        self._waiting = False
-                        self._goal_vic = self._recent_vic
-                        self._goal_loc = self._remaining[self._goal_vic]
-                        self._recent_vic = None
-                        self._phase = Phase.PLAN_PATH_TO_VICTIM
-                    else:
-                        self._answered = True
-                        self._waiting = False
-                        self._todo.append(self._recent_vic)
-                        self._recent_vic = None
-                        self._phase = Phase.FIND_NEXT_GOAL
                 # Find the next area to search when the agent is not waiting for an answer from the human or occupied with rescuing a victim
                 if not self._waiting and not self._rescue:
                     self._recent_vic = None
@@ -808,6 +789,7 @@ class BaselineAgent(ArtificialBrain):
                 return Idle.__name__, {'duration_in_ticks': 25}
 
             if Phase.PLAN_PATH_TO_VICTIM == self._phase:
+                print("Line 811")
                 # Plan the path to a found victim using its location
                 self._navigator.reset_full()
                 self._navigator.add_waypoints([self._found_victim_logs[self._goal_vic]['location']])
@@ -815,6 +797,7 @@ class BaselineAgent(ArtificialBrain):
                 self._phase = Phase.FOLLOW_PATH_TO_VICTIM
 
             if Phase.FOLLOW_PATH_TO_VICTIM == self._phase: # Independent of trust
+                print("Line 819")
                 # Start searching for other victims if the human already rescued the target victim
                 if self._goal_vic and self._goal_vic in self._collected_victims:
                     self._phase = Phase.FIND_NEXT_GOAL
@@ -830,6 +813,7 @@ class BaselineAgent(ArtificialBrain):
                     self._phase = Phase.TAKE_VICTIM
 
             if Phase.TAKE_VICTIM == self._phase: # Independent of trust
+                print("Line 836")
                 # Store all area tiles in a list
                 room_tiles = [info['location'] for info in state.values()
                              if 'class_inheritance' in info
@@ -857,7 +841,18 @@ class BaselineAgent(ArtificialBrain):
                         if not self._human_name in info['name']:
                             self._waiting = True
                             self._moving = False
-                            return None, {}
+                            if self.idle_since is not None and self._tick - self.idle_since < self._calculate_timeout(self._loadBelief(self._team_members, self._folder)):
+                                self._waiting = False
+                                self._moving = True
+                                self.idle_since = None
+                                self._rescue = 'alone'
+                                self._goal_loc = self._remaining[self._goal_vic]
+                                self._send_message('Timeout exceeded, I will carry the victim myself', 'RescueBot')
+                                break
+                            else:
+                                if self.idle_since is None:
+                                    self.idle_since = self._tick
+                                return None, {}
                 # Add the victim to the list of rescued victims when it has been picked up
                 if len(objects) == 0 and 'critical' in self._goal_vic or len( # TODO: Update based on trust??
                         objects) == 0 and 'mild' in self._goal_vic and self._rescue == 'together':
@@ -869,6 +864,7 @@ class BaselineAgent(ArtificialBrain):
                     self._phase = Phase.FIND_NEXT_GOAL
                 # When rescuing mildly injured victims alone, pick the victim up and plan the path to the drop zone
                 if 'mild' in self._goal_vic and self._rescue == 'alone':
+                    print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
                     self._phase = Phase.PLAN_PATH_TO_DROPPOINT
                     if self._goal_vic not in self._collected_victims:
                         self._collected_victims.append(self._goal_vic)
@@ -877,6 +873,7 @@ class BaselineAgent(ArtificialBrain):
                                                   'human_name': self._human_name}
 
             if Phase.PLAN_PATH_TO_DROPPOINT == self._phase:  # Communication: Indepedent of trust
+                print("Line 884")
                 self._navigator.reset_full()
                 # Plan the path to the drop zone
                 self._navigator.add_waypoints([self._goal_loc])
@@ -884,6 +881,7 @@ class BaselineAgent(ArtificialBrain):
                 self._phase = Phase.FOLLOW_PATH_TO_DROPPOINT
 
             if Phase.FOLLOW_PATH_TO_DROPPOINT == self._phase: # Communication: Indepedent of trust
+                print("Line 892")
                 # Communicate that the agent is transporting a mildly injured victim alone to the drop zone
                 if 'mild' in self._goal_vic and self._rescue == 'alone':
                     self._send_message('Transporting ' + self._goal_vic + ' to the drop zone.', 'RescueBot')
