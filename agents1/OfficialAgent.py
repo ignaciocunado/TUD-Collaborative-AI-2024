@@ -99,7 +99,6 @@ class BaselineAgent(ArtificialBrain):
         self._atomic_actions = ['Search', 'Collect', 'Found', "Remove"]
 
         self._aid_remove = False
-        self._aid_rescue = False
 
         # idle time
         self.idle_since = None
@@ -107,9 +106,15 @@ class BaselineAgent(ArtificialBrain):
 
         # Define competence and willingness thresholds
         self._competence_threshold = -0.3
-        self._willigness_threshold = -0.1
+        self._willingness_threshold = -0.1
 
         self._objectiveHistory: dict[str, list[Objective]] = {} # Group by possible action
+
+        self.distances = {
+            'close': 30, # +3 seconds
+            'medium': 60, # +6 seconds
+            'far': 80 # +8 seconds
+        }
 
     def initialize(self):
         # Initialization of the state tracker and navigation algorithm
@@ -121,8 +126,7 @@ class BaselineAgent(ArtificialBrain):
         # Filtering of the world state before deciding on an action 
         return state
 
-    def decide_on_actions(self, state): # TODO: Extend: How to act based on willingness and competence
-
+    def decide_on_actions(self, state):
         # Identify team members
         self._tick += 1
         agent_name = state[self.agent_id]['obj_id']
@@ -262,10 +266,10 @@ class BaselineAgent(ArtificialBrain):
                         self._goal_vic = vic
                         self._goal_loc = remaining[vic]
                         # Rescue together when victim is critical or when the human is weak and the victim is mildly injured and unwilling
-                        if 'critical' in vic or 'mild' in vic and self._condition == 'weak':# and willingness < self._willigness_threshold:
+                        if 'critical' in vic or 'mild' in vic and self._condition == 'weak' and willingness < self._willingness_threshold:
                             self._rescue = 'together'
                         # Rescue alone if the victim is mildly injured and the human not weak and unwilling
-                        if 'mild' in vic and self._condition != 'weak': #and willingness < self._willigness_threshold:
+                        if 'mild' in vic and self._condition != 'weak' and willingness < self._willingness_threshold:
                             self._rescue = 'alone'
                         # Plan path to victim because the exact location is known (i.e., the agent found this victim)
                         if 'location' in self._found_victim_logs[vic].keys():
@@ -752,8 +756,7 @@ class BaselineAgent(ArtificialBrain):
                     self._recent_vic = None
                     self._phase = Phase.PLAN_PATH_TO_VICTIM
                 # Make a plan to rescue the mildly injured victim alone if the human decides so or if the human is incompetent and or unwilling, and communicate this to the human
-                #competence < self._competence_threshold or willingness < self._willingness_threshold or
-                if self.received_messages_content and self.received_messages_content[
+                if competence < self._competence_threshold or willingness < self._willingness_threshold or self.received_messages_content and self.received_messages_content[
                     -1] == 'Rescue alone' and 'mild' in self._recent_vic:
                     self._send_message('Picking up ' + self._recent_vic + ' in ' + self._door['room_name'] + '.',
                                       'RescueBot')
@@ -840,8 +843,8 @@ class BaselineAgent(ArtificialBrain):
                                     self._goal_loc = self._remaining[self._goal_vic]
                                     self._send_message('Timeout exceeded, I will carry the victim myself', 'RescueBot')
                                     break
-                                else:
-                                    self._todo.append(self._recent_vic) # TODO: FIX
+                                else: # TODO: FIX because Agent will not continue searching after timeout
+                                    self._todo.append(self._recent_vic)
                                     self._recent_vic = None
                                     self._phase = Phase.FIND_NEXT_GOAL
                                     self._send_message('Timeout exceeded, I will continue searching', 'RescueBot')
@@ -1103,7 +1106,6 @@ class BaselineAgent(ArtificialBrain):
                     self._objectiveHistory.setdefault(message, []).append(Objective(action=message, start_time=tick, area=self._human_loc))
 
             if message == 'Rescue together' or message == 'Rescue': # Start time for joint rescue
-                self._aid_rescue = True
                 print(message)
                 print("Received rescue together, _rescue=True, log intent, start threshold")
                 agent_beliefs['willingness'] += 0.2
@@ -1185,14 +1187,9 @@ class BaselineAgent(ArtificialBrain):
         Calculates the dynamic threshold to complete an action
         """
         threshold = 60 # Base number of ticks
-        distances = {
-            'close': 30, # +3 seconds
-            'medium': 60, # +6 seconds
-            'far': 80 # +8 seconds
-        }
 
         if distance:
-            threshold += distances[self._distance_human]
+            threshold += self.distances[self._distance_human]
 
         if action == 'rescue':
             if beliefs['competence'] > 0.1:
@@ -1209,16 +1206,10 @@ class BaselineAgent(ArtificialBrain):
         """
         Calculates the timeout for the robot to stop waiting
         """
-        distances = {
-            'close': 30,  # +3 seconds
-            'medium': 60,  # +6 seconds
-            'far': 80  # +8 seconds
-        }
-
         to = 100 + 30 * trust.get(self._human_name).get('willingness')
 
         if distance:
-            to += distances[self._distance_human]
+            to += self.distances[self._distance_human]
 
         return to
 
@@ -1273,17 +1264,9 @@ class BaselineAgent(ArtificialBrain):
 
 """
 TODO list:
-- (DONE) FInd out when self.rescue is activated and update if statement
-- (Semi-Done) Do not directly append to rescued victim, do so only based on trust
-- Logging functions for graphs (number of actions, competence, willingness...)
-- If you tell robot there is somebody in an area but not found later
-- Set default values and set adjusted values
-- Dynamic threshold depending on rock type
-- Have two separate lists based on rooms searched by human and victims collected by human (claimed)
-
-
-
-- Stop threshold???
+- Do not log intent to remove when robot is removing tree
+- (Maybe) Do not directly append to rescued victim, do so only based on trust + Have two separate lists based on rooms searched by human and victims collected by human (claimed)
 - Update actions based on willingness and so on
-- 
+- Dynamic thresholds based on rock type in removal
+- Should we update willingness and competence if timeout?
 """
