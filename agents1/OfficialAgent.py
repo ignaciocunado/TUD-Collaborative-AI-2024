@@ -99,6 +99,7 @@ class BaselineAgent(ArtificialBrain):
         self._atomic_actions = ['Search', 'Collect', 'Found', "Remove"]
 
         self._aid_remove = False
+        self._obstacle_is_tree = False
 
         # idle time
         self.idle_since = None
@@ -472,7 +473,7 @@ class BaselineAgent(ArtificialBrain):
                         else:
                             if self.idle_since is not None and self._tick - self.idle_since > self._calculate_timeout(
                                     self._loadBelief(self._team_members, self._folder)):
-                                print("TIMEOUT OVER")
+                                competence -= 0.05
                                 self._waiting = False
                                 self._phase = Phase.FIND_NEXT_GOAL
                                 self.idle_since = None
@@ -492,6 +493,8 @@ class BaselineAgent(ArtificialBrain):
                                 self._collected_victims) + '\n explore - areas searched: area ' + str(
                                 self._searched_rooms).replace('area ', '') + ' \
                                 \n clock - removal time: 10 seconds', 'RescueBot')
+                            self._obstacle_is_tree = True
+                            print("Obstacle is set to be a tree")
                             self._waiting = True
                         # Determine the next area to explore if the human tells the agent not to remove the obstacle
                         if self.received_messages_content and self.received_messages_content[
@@ -502,6 +505,8 @@ class BaselineAgent(ArtificialBrain):
                             self._to_search.append(self._door['room_name'])
                             self._phase = Phase.FIND_NEXT_GOAL
                             self.idle_since = None
+                            self._obstacle_is_tree = False
+                            print("")
                         # Remove the obstacle if the human tells the agent to do so
                         if  self.received_messages_content and self.received_messages_content[
                             -1] == 'Remove' or self._remove:
@@ -513,8 +518,11 @@ class BaselineAgent(ArtificialBrain):
                             if self._remove:
                                 self._send_message('Removing tree blocking ' + str(
                                     self._door['room_name']) + ' because you asked me to.', 'RescueBot')
+
                             self._phase = Phase.ENTER_ROOM
                             self._remove = False
+                            self._obstacle_is_tree = False # Take out flag
+                            print("Obstacle is not longer marked as a tree")
                             self.idle_since = None
                             return RemoveObject.__name__, {'object_id': info['obj_id']}
                         # Remain idle untill the human communicates what to do with the identified obstacle
@@ -576,7 +584,8 @@ class BaselineAgent(ArtificialBrain):
                         else:
                             if self.idle_since is not None and self._tick - self.idle_since > self._calculate_timeout(
                                     self._loadBelief(self._team_members, self._folder)):
-                                print("TIMEOUT OVER")
+                                # Reduce competence since it took to much time to do action
+                                competence -= 0.05
                                 self._waiting = False
                                 self._phase = Phase.FIND_NEXT_GOAL
                                 self.idle_since = None
@@ -854,7 +863,7 @@ class BaselineAgent(ArtificialBrain):
                                     self.idle_since = self._tick
                                 return None, {}
                 # Add the victim to the list of rescued victims when it has been picked up
-                if len(objects) == 0 and 'critical' in self._goal_vic or len( # TODO: Update based on trust??
+                if len(objects) == 0 and 'critical' in self._goal_vic or len(
                         objects) == 0 and 'mild' in self._goal_vic and self._rescue == 'together':
                     self._waiting = False
                     if self._goal_vic not in self._collected_victims:
@@ -902,6 +911,10 @@ class BaselineAgent(ArtificialBrain):
                 self._carrying = False
                 # Drop the victim on the correct location on the drop zone
                 return Drop.__name__, {'human_name': self._human_name}
+
+            # Update values of competence and willingness if they have been changed during the play
+            trustBeliefs.get[self._human_name]["willingness"] = willingness
+            trustBeliefs[self._human_name]['competence'] = competence
 
     def _get_drop_zones(self, state):
         '''
@@ -1099,9 +1112,9 @@ class BaselineAgent(ArtificialBrain):
                         Objective(action="Rescue together", start_time=tick, area=area))
 
 
-                if message == 'Remove': # TODO: Do not start timer when telling robot to remove tree
+                if not self._obstacle_is_tree and message == 'Remove':
                     self._aid_remove = True
-                    print("Received remove together, _remove=True, log intent, start threshold")
+                    print(self._obstacle_is_tree)
                     agent_beliefs['willingness'] += 0.2
                     self._objectiveHistory.setdefault(message, []).append(Objective(action=message, start_time=tick, area=self._human_loc))
 
@@ -1165,7 +1178,6 @@ class BaselineAgent(ArtificialBrain):
         trustBeliefs[self._human_name]['willingness'] = np.clip(trustBeliefs[self._human_name]['willingness'], -1, 1)
         trustBeliefs[self._human_name]['competence'] = np.clip(trustBeliefs[self._human_name]['competence'], -1, 1)
 
-        print("Rescue action being logged: ", self._objectiveHistory.get('Remove together', []))
         print("Remove action being logged: ", self._objectiveHistory.get('Remove', []))
 
         # Save current trust belief values so we can later use and retrieve them to add to a csv file with all the logged trust belief values
@@ -1179,10 +1191,9 @@ class BaselineAgent(ArtificialBrain):
         trustBeliefs[self._human_name] = agent_beliefs
 
         print("Tick: " +  str(tick) + " " + str(agent_beliefs))
-        print("Rescue action being logged: ", self._objectiveHistory.get("Rescue", []))
         return trustBeliefs
 
-    def _calculate_threshold(self, beliefs: dict[str, int], action: str, distance: bool = False): # TODO: Update
+    def _calculate_threshold(self, beliefs: dict[str, int], action: str, distance: bool = False):
         """
         Calculates the dynamic threshold to complete an action
         """
