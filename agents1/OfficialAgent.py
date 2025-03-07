@@ -1122,12 +1122,16 @@ class BaselineAgent(ArtificialBrain):
                         agent_beliefs['competence'] -= 0.1
 
                 # Log collect goal
-                if action_type == 'Collect':
+                if action_type == 'Collect': # TODO: Update these values and see if we should decrease willingness or competence. Maybe only penalise?
+                    if area in self._objectiveHistory.get('Search', []):
+                        agent_beliefs['competence'] += 0.1
+                    else:
+                        agent_beliefs['competence'] -= 0.1
                     if area in self._objectiveHistory.get('Found', []):
                         print("Competence increased since human said collect a victim in an area he said he found")
                         agent_beliefs['competence'] += 0.1
                     else:
-                        print("Competence decreased since human said collect in an area he wasn't going to search")
+                        print("Competence decreased since human said collect a victim he did not say he found")
                         agent_beliefs['competence'] -= 0.1
 
                     self._objectiveHistory.get(action_type, []).append(
