@@ -585,13 +585,17 @@ class BaselineAgent(ArtificialBrain):
                             if self.idle_since is not None and self._tick - self.idle_since > self._calculate_timeout(
                                     self._loadBelief(self._team_members, self._folder)):
                                 # Reduce competence since it took to much time to do action
+                                # TODO: Remove stones automatically if timeout
                                 competence -= 0.05
-                                self._waiting = False
-                                self._phase = Phase.FIND_NEXT_GOAL
                                 self.idle_since = None
-                                self._remove = False
-                                self._to_search.append(self._door['room_name'])
                                 self._answered = True
+                                self._waiting = False
+                                self._send_message('Removing stones blocking ' + str(self._door['room_name']) + ' because you took too long to come.',
+                                                   'RescueBot')
+                                self._phase = Phase.ENTER_ROOM
+                                self._remove = False
+                                self.idle_since = None
+                                return RemoveObject.__name__, {'object_id': info['obj_id']}
                             else:
                                 return None, {}
                 # If no obstacles are blocking the entrance, enter the area
