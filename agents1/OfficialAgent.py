@@ -490,7 +490,6 @@ class BaselineAgent(ArtificialBrain):
                                 self._searched_rooms).replace('area ', '') + ' \
                                 \n clock - removal time: 10 seconds', 'RescueBot')
                             self._obstacle_is_tree = True
-                            print("Obstacle is set to be a tree")
                             self._waiting = True
                         # Determine the next area to explore if the human tells the agent not to remove the obstacle
                         if self.received_messages_content and self.received_messages_content[
@@ -502,7 +501,6 @@ class BaselineAgent(ArtificialBrain):
                             self._phase = Phase.FIND_NEXT_GOAL
                             self.idle_since = None
                             self._obstacle_is_tree = False
-                            print("")
                         # Remove the obstacle if the human tells the agent to do so
                         if self.received_messages_content and self.received_messages_content[
                             -1] == 'Remove' or self._remove:
@@ -920,17 +918,17 @@ class BaselineAgent(ArtificialBrain):
                 return Drop.__name__, {'human_name': self._human_name}
 
             # Update values of competence and willingness if they have been changed during the play
-            trustBeliefs[self._human_name]["willingness"] = willingness
-            trustBeliefs[self._human_name]['competence'] = competence
+            update = True if willingness != trustBeliefs[self._human_name]["willingness"] or competence != trustBeliefs[self._human_name]['competence'] else False
 
-        # Copy trust values to disk
-        print("Copying values to disk")
-        with open(folder + '/beliefs/currentTrustBelief.csv', mode='w') as csv_file:
-            csv_writer = csv.writer(csv_file, delimiter=';', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-            csv_writer.writerow(['name', 'competence', 'willingness'])
-            csv_writer.writerow([self._human_name, trustBeliefs[self._human_name]['competence'],
-                                 trustBeliefs[self._human_name]['willingness']])
-
+            # Copying values to disk
+            if update:
+                trustBeliefs[self._human_name]["willingness"] = willingness
+                trustBeliefs[self._human_name]['competence'] = competence
+                with open(self._folder + '/beliefs/currentTrustBelief.csv', mode='w') as csv_file:
+                    csv_writer = csv.writer(csv_file, delimiter=';', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+                    csv_writer.writerow(['name', 'competence', 'willingness'])
+                    csv_writer.writerow([self._human_name, trustBeliefs[self._human_name]['competence'],
+                                         trustBeliefs[self._human_name]['willingness']])
 
     def _get_drop_zones(self, state):
         '''
@@ -1089,7 +1087,6 @@ class BaselineAgent(ArtificialBrain):
         '''
         Baseline implementation of a trust belief. Creates a dictionary with trust belief scores for each team member, for example based on the received messages.
         '''
-        print("Idle since: " + str(self.idle_since))
         agent_beliefs = trustBeliefs[self._human_name]
         all_rooms = state.get_all_room_names().remove('world_bounds')
 
@@ -1136,8 +1133,6 @@ class BaselineAgent(ArtificialBrain):
                         Objective(action=message, start_time=tick, area=self._human_loc))
 
             if message == 'Rescue together' or message == 'Rescue':  # Start time for joint rescue
-                print(message)
-                print("Received rescue together, _rescue=True, log intent, start threshold")
                 agent_beliefs['willingness'] += 0.2
                 self._objectiveHistory.setdefault('Rescue', []).append(
                     Objective(action=message, start_time=tick, area=self._agent_loc, person=self._recent_vic))
@@ -1161,17 +1156,12 @@ class BaselineAgent(ArtificialBrain):
         if not self._aid_remove:
             for objective in self._objectiveHistory.get('Remove', []):
                 if objective.end_time is None:
-                    print("Set end time")
                     objective.end_time = tick
                     threshold = self._calculate_threshold(agent_beliefs, 'remove', True)
-                    print("Threshold defined as: ", threshold)
-                    print("Actual time: ", objective.end_time - objective.start_time)
                     if objective.end_time - objective.start_time < threshold:
                         agent_beliefs['competence'] += 0.1
-                        print("Increase competence")
                     else:
                         agent_beliefs['competence'] -= 0.1
-                        print("Decrease competence")
 
         # Joint Rescue event asked from the Robot's side
         if self._carrying_together:  # self.rescue can be together or alone, only works when robot finds a victim and asks for help OR when you ask for the robots help to rescue a victim
@@ -1187,14 +1177,13 @@ class BaselineAgent(ArtificialBrain):
 
         # If all rooms have been searched but not all victims rescued -> human lies -> willingness goes down
         if self._searched_rooms == all_rooms and len(self._found_victims) < 8:
-            print("all rooms have been searched but not all victims rescued -> human lies -> willingness goes down")
+            print("All rooms have been searched but not all victims rescued -> human lies -> willingness goes down")
             trustBeliefs[self._human_name]['willingness'] -= 0.5
 
         # Restrict the competence and willingness belief to a range of -1 to 1
         trustBeliefs[self._human_name]['willingness'] = np.clip(trustBeliefs[self._human_name]['willingness'], -1, 1)
         trustBeliefs[self._human_name]['competence'] = np.clip(trustBeliefs[self._human_name]['competence'], -1, 1)
 
-        print("Remove action being logged: ", self._objectiveHistory.get('Remove', []))
 
         # Save current trust belief values so we can later use and retrieve them to add to a csv file with all the logged trust belief values
         with open(folder + '/beliefs/currentTrustBelief.csv', mode='w') as csv_file:
@@ -1298,9 +1287,3 @@ class BaselineAgent(ArtificialBrain):
             else:
                 locs.append((x[i], max(y)))
         return locs
-
-
-"""
-TODO list:
-- (Maybe) Do not directly append to rescued victim, do so only based on trust + Have two separate lists based on rooms searched by human and victims collected by human (claimed)
-"""
