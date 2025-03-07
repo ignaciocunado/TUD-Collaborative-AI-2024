@@ -1,8 +1,12 @@
 import csv
 import enum
+import math
+import random
 from dataclasses import dataclass
+from symbol import try_stmt
 from typing import Optional
 
+import numpy as np
 from matrx import utils
 from matrx.actions.object_actions import RemoveObject
 from matrx.agents.agent_utils.navigator import Navigator
@@ -947,6 +951,7 @@ class BaselineAgent(ArtificialBrain):
         '''
         process incoming messages received from the team members
         '''
+        trustBeliefs = self._loadBelief(self._team_members, self._folder)
 
         receivedMessages = {}
         # Create a dictionary with a list of received messages from each team member
@@ -988,7 +993,7 @@ class BaselineAgent(ArtificialBrain):
                     if 'mild' in foundVic and condition != 'weak':
                         self._todo.append(foundVic)
                 # If a received message involves team members rescuing victims, add these victims and their locations to memory
-                if msg.startswith('Collect:'):
+                if msg.startswith('Collect:'): # TODO: Apply same as in remove
                     # Identify which victim and area it concerns
                     if len(msg.split()) == 6:
                         collectVic = ' '.join(msg.split()[1:4])
@@ -1006,14 +1011,16 @@ class BaselineAgent(ArtificialBrain):
                         self._found_victim_logs[collectVic] = {'room': loc}
                     # Add the victim to the memory of rescued victims when the   human's condition is not weak
                     if condition != 'weak' and collectVic not in self._collected_victims:
-                        self._collected_victims.append(collectVic)  # TODO: Change this ??
+                        self._collected_victims.append(collectVic)
                     # Decide to help the human carry the victim together when the human's condition is weak
                     if condition == 'weak':
                         self._rescue = 'together'
                 # If a received message involves team members asking for help with removing obstacles, add their location to memory and come over
                 if msg.startswith('Remove:'):
                     # Come over immediately when the agent is not carrying a victim
-                    if not self._carrying:
+                    competence = trustBeliefs[self._human_name]['competence']
+                    we_trust = True if competence > 0.20 else np.random.uniform(0, 1) > 0.6 # TODO: Make more sophisticated
+                    if not self._carrying and we_trust:
                         # Identify at which location the human needs help
                         area = 'area ' + msg.split()[-1]
                         self._door = state.get_room_doors(area)[0]
@@ -1035,7 +1042,7 @@ class BaselineAgent(ArtificialBrain):
                         # Plan the path to the relevant area
                         self._phase = Phase.PLAN_PATH_TO_ROOM
                     # Come over to help after dropping a victim that is currently being carried by the agent
-                    else:
+                    else: # TODO: Check this case
                         area = 'area ' + msg.split()[-1]
                         self._send_message('Will come to ' + area + ' after dropping ' + self._goal_vic + '.',
                                            'RescueBot')
