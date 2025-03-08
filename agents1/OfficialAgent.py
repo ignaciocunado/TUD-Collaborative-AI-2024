@@ -2,6 +2,7 @@ import csv
 import enum
 import math
 import random
+import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -105,6 +106,7 @@ class BaselineAgent(ArtificialBrain):
         self._willingness_threshold = -0.1
 
         self._objectiveHistory: dict[str, list[Objective]] = {}  # Group by possible action
+        self._dictionary_to_print: dict[int, dict[str, float]] = {}
 
         self.distances = {
             'close': 0,  # +0 seconds
@@ -1243,6 +1245,8 @@ class BaselineAgent(ArtificialBrain):
         trustBeliefs[self._human_name] = agent_beliefs
 
         print("Tick: " + str(tick) + " " + str(agent_beliefs))
+        self._dictionary_to_print[tick] = agent_beliefs
+        self._plot_ticks()
         return trustBeliefs
 
     def _calculate_threshold(self, beliefs: dict[str, int], action: str, distance: bool = False):
@@ -1386,3 +1390,27 @@ class BaselineAgent(ArtificialBrain):
         alpha = 0.4
         discount = 1 - (alpha * (trustBeliefs[self._human_name][belief] ** 2))
         return max(min(discount * update, 1), -1)
+
+    def _plot_ticks(self, save_path="trust_logs/trust_beliefs_per_tick.csv"):
+        """
+        Updates competence and willingness values
+        """
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)  # Creates trust_logs if it doesn't exist
+        if save_path:
+            with open(save_path, mode='w', newline='') as csv_file:
+                csv_writer = csv.writer(csv_file, delimiter=';', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+                csv_writer.writerow(['Tick', 'Willingness', 'Competence'])
+
+                ticks = self._dictionary_to_print.keys()
+                for tick in ticks:
+                    csv_writer.writerow([
+                        tick,
+                        self._dictionary_to_print[tick]['willingness'],
+                        self._dictionary_to_print[tick]['competence']
+                    ])
+        else:
+            ticks = self._dictionary_to_print.keys()
+            for tick in ticks:
+                print(
+                    f"{tick},{self._dictionary_to_print[tick]['willingness']},{self._dictionary_to_print[tick]['competence']}")
+
