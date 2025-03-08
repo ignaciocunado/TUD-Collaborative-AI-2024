@@ -484,7 +484,8 @@ class BaselineAgent(ArtificialBrain):
                         'obj_id']:
                         objects.append(info)
                         # Communicate which obstacle is blocking the entrance
-                        if self._answered == False and not self._remove and not self._waiting:
+                        ask : bool = self._decide_to_ask_or_not(willingness, competence)
+                        if  self._answered == False and not self._remove and not self._waiting:
                             self._send_message('Found tree blocking  ' + str(self._door['room_name']) + '. Please decide whether to "Remove" or "Continue" searching. \n \n \
                                 Important features to consider are: \n safe - victims rescued: ' + str(
                                 self._collected_victims) + '\n explore - areas searched: area ' + str(
@@ -502,8 +503,9 @@ class BaselineAgent(ArtificialBrain):
                             self._phase = Phase.FIND_NEXT_GOAL
                             self.idle_since = None
                             self._obstacle_is_tree = False
+                        # If decide not to ask, remove it automatically
                         # Remove the obstacle if the human tells the agent to do so
-                        if self.received_messages_content and self.received_messages_content[
+                        if not ask or self.received_messages_content and self.received_messages_content[
                             -1] == 'Remove' or self._remove:
                             if not self._remove:
                                 self._answered = True
@@ -527,6 +529,7 @@ class BaselineAgent(ArtificialBrain):
                             info['obj_id']:
                         objects.append(info)
                         # Communicate which obstacle is blocking the entrance
+                        ask: bool = self._decide_to_ask_or_not(willingness, competence)
                         if self._answered == False and not self._remove and not self._waiting:
                             self._send_message('Found stones blocking  ' + str(self._door['room_name']) + '. Please decide whether to "Remove together", "Remove alone", or "Continue" searching. \n \n \
                                 Important features to consider are: \n safe - victims rescued: ' + str(
@@ -545,7 +548,7 @@ class BaselineAgent(ArtificialBrain):
                             self._to_search.append(self._door['room_name'])
                             self._phase = Phase.FIND_NEXT_GOAL
                         # Remove the obstacle alone if the human decides so or if human is incompetent
-                        if self.received_messages_content and self.received_messages_content[
+                        if not ask or self.received_messages_content and self.received_messages_content[
                             -1] == 'Remove alone' and not self._remove:
                             self._answered = True
                             self._waiting = False
@@ -764,8 +767,7 @@ class BaselineAgent(ArtificialBrain):
                     self._recent_vic = None
                     self._phase = Phase.PLAN_PATH_TO_VICTIM
                 # Make a plan to rescue the mildly injured victim alone if the human decides so or if the human is incompetent and or unwilling, and communicate this to the human
-                if competence < self._competence_threshold or willingness < self._willingness_threshold or self.received_messages_content and \
-                        self.received_messages_content[
+                if self.received_messages_content and self.received_messages_content[ # TODO  self._decide_to_ask_or_not(willingness, competence) or
                             -1] == 'Rescue alone' and 'mild' in self._recent_vic:
                     self._send_message('Picking up ' + self._recent_vic + ' in ' + self._door['room_name'] + '.',
                                        'RescueBot')
@@ -1262,6 +1264,32 @@ class BaselineAgent(ArtificialBrain):
         to += rock_offset
 
         return to
+
+    def _decide_to_ask_or_not(self, willingness : float, competence : float) -> bool:
+        """
+        Decides whether to ask for help when removing a rock or to do it alone
+
+        :param willingness: willingness value
+        :param competence: competence value
+
+        :returns whether to ask for help or not
+        """
+        low_willingness : bool = willingness < -0.5
+        high_competence : bool = competence > 0.6
+
+        if low_willingness and high_competence:
+            if abs(willingness) > abs(competence):
+                # If human is more unwilling than competent, do not ask
+                return False
+            else:
+                # If human is more competent than unwilling (or the same), ask
+                return True
+        elif low_willingness:
+            return False # Low willingness hence agent should not even bother to ask
+        else:
+            return True # High competence hence agent should ask for help
+
+
 
     def _send_message(self, mssg, sender):
         '''
