@@ -3,7 +3,6 @@ import enum
 import math
 import random
 from dataclasses import dataclass
-from symbol import try_stmt
 from typing import Optional
 
 import numpy as np
@@ -53,9 +52,7 @@ class Objective:
     end_time: Optional[int] = None
 
 
-baseline = None  # To change depending on the evaluation method
-
-
+baseline = None # To change depending on the evaluation method
 # Can be set to "NEVER-TRUST", "ALWAYS-TRUST" or "RANDOM-TRUST"
 
 class BaselineAgent(ArtificialBrain):
@@ -104,7 +101,7 @@ class BaselineAgent(ArtificialBrain):
         self._last_processed_message = 0
 
         # Define competence and willingness thresholds
-        self._competence_threshold = -0.3
+        self._competence_threshold = -0.1
         self._willingness_threshold = -0.1
 
         self._objectiveHistory: dict[str, list[Objective]] = {}  # Group by possible action
@@ -142,8 +139,8 @@ class BaselineAgent(ArtificialBrain):
         messages_to_process = self._received_messages[self._last_processed_message + 1:]
         self._process_messages(state, self._team_members, self._condition)
         # Initialize and update trust beliefs for team members
-        trustBeliefs = self._loadBelief(self._team_members, self._folder)
-        self._trustBelief(self._tick, self._team_members, trustBeliefs, self._folder, messages_to_process, state)
+        trustBeliefs = self._loadBelief(self._team_members, self._folder, baseline)
+        self._trustBelief(self._tick, self._team_members, trustBeliefs, self._folder, messages_to_process, state, baseline)
         self._last_processed_message = len(self._received_messages) - 1
 
         # Check whether human is close in distance
@@ -472,8 +469,8 @@ class BaselineAgent(ArtificialBrain):
                         # Remain idle until the human communicates what to do with the identified obstacle
                         else:
                             if self.idle_since is not None and self._tick - self.idle_since > self._calculate_timeout(
-                                    self._loadBelief(self._team_members, self._folder), 50): # Updates timeout based on expected time of removal
-                                competence -= 0.05
+                                    self._loadBelief(self._team_members, self._folder, baseline), 50): # Updates timeout based on expected time of removal
+                                competence -= 0.05 if baseline is None else 0.0
                                 self._waiting = False
                                 self._phase = Phase.FIND_NEXT_GOAL
                                 self.idle_since = None
@@ -487,7 +484,8 @@ class BaselineAgent(ArtificialBrain):
                         'obj_id']:
                         objects.append(info)
                         # Communicate which obstacle is blocking the entrance
-                        if self._answered == False and not self._remove and not self._waiting:
+                        ask : bool = self._decide_to_ask_or_not(willingness, competence)
+                        if  self._answered == False and not self._remove and not self._waiting:
                             self._send_message('Found tree blocking  ' + str(self._door['room_name']) + '. Please decide whether to "Remove" or "Continue" searching. \n \n \
                                 Important features to consider are: \n safe - victims rescued: ' + str(
                                 self._collected_victims) + '\n explore - areas searched: area ' + str(
@@ -505,8 +503,9 @@ class BaselineAgent(ArtificialBrain):
                             self._phase = Phase.FIND_NEXT_GOAL
                             self.idle_since = None
                             self._obstacle_is_tree = False
+                        # If decide not to ask, remove it automatically
                         # Remove the obstacle if the human tells the agent to do so
-                        if self.received_messages_content and self.received_messages_content[
+                        if not ask or self.received_messages_content and self.received_messages_content[
                             -1] == 'Remove' or self._remove:
                             if not self._remove:
                                 self._answered = True
@@ -530,6 +529,7 @@ class BaselineAgent(ArtificialBrain):
                             info['obj_id']:
                         objects.append(info)
                         # Communicate which obstacle is blocking the entrance
+                        ask: bool = self._decide_to_ask_or_not(willingness, competence)
                         if self._answered == False and not self._remove and not self._waiting:
                             self._send_message('Found stones blocking  ' + str(self._door['room_name']) + '. Please decide whether to "Remove together", "Remove alone", or "Continue" searching. \n \n \
                                 Important features to consider are: \n safe - victims rescued: ' + str(
@@ -548,7 +548,7 @@ class BaselineAgent(ArtificialBrain):
                             self._to_search.append(self._door['room_name'])
                             self._phase = Phase.FIND_NEXT_GOAL
                         # Remove the obstacle alone if the human decides so or if human is incompetent
-                        if self.received_messages_content and self.received_messages_content[
+                        if not ask or self.received_messages_content and self.received_messages_content[
                             -1] == 'Remove alone' and not self._remove:
                             self._answered = True
                             self._waiting = False
@@ -581,8 +581,8 @@ class BaselineAgent(ArtificialBrain):
                         # Remain idle until the human communicates what to do with the identified obstacle
                         else:
                             if self.idle_since is not None and self._tick - self.idle_since > self._calculate_timeout(
-                                    self._loadBelief(self._team_members, self._folder), 30):
-                                competence -= 0.05 # Reduce competence since it took to much time to do action
+                                    self._loadBelief(self._team_members, self._folder, baseline), 30):
+                                competence -= 0.05 if baseline is None else 0.0 # Reduce competence since it took to much time to do action
                                 self.idle_since = None
                                 self._answered = True
                                 self._waiting = False
@@ -719,7 +719,7 @@ class BaselineAgent(ArtificialBrain):
                     self._send_message(self._goal_vic + ' not present in ' + str(self._door[
                                                                                      'room_name']) + ' because I searched the whole area without finding ' + self._goal_vic + '.',
                                        'RescueBot')
-                    willingness -= 0.15
+                    willingness -= 0.15 if baseline is None else 0.0
                     # Remove the victim location from memory
                     self._found_victim_logs.pop(self._goal_vic, None)
                     self._found_victims.remove(self._goal_vic)
@@ -767,8 +767,7 @@ class BaselineAgent(ArtificialBrain):
                     self._recent_vic = None
                     self._phase = Phase.PLAN_PATH_TO_VICTIM
                 # Make a plan to rescue the mildly injured victim alone if the human decides so or if the human is incompetent and or unwilling, and communicate this to the human
-                if competence < self._competence_threshold or willingness < self._willingness_threshold or self.received_messages_content and \
-                        self.received_messages_content[
+                if self.received_messages_content and self.received_messages_content[ # TODO  self._decide_to_ask_or_not(willingness, competence) or
                             -1] == 'Rescue alone' and 'mild' in self._recent_vic:
                     self._send_message('Picking up ' + self._recent_vic + ' in ' + self._door['room_name'] + '.',
                                        'RescueBot')
@@ -847,8 +846,8 @@ class BaselineAgent(ArtificialBrain):
                             self._waiting = True
                             self._moving = False
                             if self.idle_since is not None and self._tick - self.idle_since > self._calculate_timeout(
-                                    self._loadBelief(self._team_members, self._folder), 0):
-                                competence -= 0.05 # Reduce competence since the timeout was exceeded
+                                    self._loadBelief(self._team_members, self._folder, baseline), 0):
+                                competence -= 0.05 if baseline is None else 0.0 # Reduce competence since the timeout was exceeded
                                 self._waiting = False
                                 self._moving = True
                                 self.idle_since = None
@@ -926,6 +925,7 @@ class BaselineAgent(ArtificialBrain):
 
             # Copying values to disk
             if update:
+                print(f"Update, {willingness}, {competence}")
                 trustBeliefs[self._human_name]["willingness"] = willingness
                 trustBeliefs[self._human_name]['competence'] = competence
                 with open(self._folder + '/beliefs/currentTrustBelief.csv', mode='w') as csv_file:
@@ -951,7 +951,7 @@ class BaselineAgent(ArtificialBrain):
         '''
         process incoming messages received from the team members
         '''
-        trustBeliefs = self._loadBelief(self._team_members, self._folder)
+        trustBeliefs = self._loadBelief(self._team_members, self._folder, baseline)
 
         receivedMessages = {}
         # Create a dictionary with a list of received messages from each team member
@@ -1051,19 +1051,31 @@ class BaselineAgent(ArtificialBrain):
                                                    '14']:
                 self._human_loc = int(mssgs[-1].split()[-1])
 
-    def _loadBelief(self, members, folder):
+    def _loadBelief(self, members, folder, baseline):
         '''
         Loads trust belief values if agent already collaborated with human before, otherwise trust belief values are initialized using default values.
         '''
         # Create a dictionary with trust values for all team members
         trustBeliefs = {}
+        if baseline is None:
+            with open(folder + '/beliefs/currentTrustBelief.csv') as csvfile:
+                reader = csv.reader(csvfile, delimiter=';', quotechar="'")
+                for row in reader:
+                    if row and row[0] == self._human_name:
+                        trustBeliefs[row[0]] = {'competence': float(row[1]), 'willingness': float(row[2])}
+                        return trustBeliefs
 
-        with open(folder + '/beliefs/currentTrustBelief.csv') as csvfile:
-            reader = csv.reader(csvfile, delimiter=';', quotechar="'")
-            for row in reader:
-                if row and row[0] == self._human_name:
-                    trustBeliefs[row[0]] = {'competence': float(row[1]), 'willingness': float(row[2])}
-                    return trustBeliefs
+        elif baseline == "NEVER-TRUST":
+            trustBeliefs[self._human_name] = {'competence': float(-1), 'willingness': float(-1)}
+            return trustBeliefs
+
+        elif baseline == "ALWAYS-TRUST":
+            trustBeliefs[self._human_name] = {'competence': float(1), 'willingness': float(1)}
+            return trustBeliefs
+
+        elif baseline == "RANDOM-TRUST":
+            trustBeliefs[self._human_name] = {'competence': float(random.uniform(-1, 1)), 'willingness': float(random.uniform(-1, 1))} #TODO: Use random seed
+            return trustBeliefs
 
         # Set a default starting trust value
         default = 0.5
@@ -1090,7 +1102,7 @@ class BaselineAgent(ArtificialBrain):
         return trustBeliefs
 
     def _trustBelief(self, tick, members, trustBeliefs, folder, receivedMessages,
-                     state):
+                     state, baseline):
         '''
         Baseline implementation of a trust belief. Creates a dictionary with trust belief scores for each team member, for example based on the received messages.
         '''
@@ -1110,54 +1122,58 @@ class BaselineAgent(ArtificialBrain):
                 # Log search goal
                 if action_type == 'Search':
                     print("Willingness increased since human said he is going to search")
-                    agent_beliefs['willingness'] += 0.05
+                    agent_beliefs['willingness'] += 0.05 if baseline is None else 0.0
 
                 # Log found event
                 if action_type == 'Found':
                     if area in self._objectiveHistory.get('Search', []):
                         print("Competence increased since human said found a victim in an area he said he would search")
-                        agent_beliefs['competence'] += 0.1
+                        agent_beliefs['competence'] += 0.1 if baseline is None else 0.0
                     else:
                         print("Competence decreased since human said found in an area he wasn't going to search")
-                        agent_beliefs['competence'] -= 0.1
+                        agent_beliefs['competence'] -= 0.1 if baseline is None else 0.0
 
                 # Log collect goal
-                if action_type == 'Collect':
+                if action_type == 'Collect': # TODO: Update these values and see if we should decrease willingness or competence. Maybe only penalise?
+                    if area in self._objectiveHistory.get('Search', []):
+                        agent_beliefs['competence'] += 0.1 if baseline is None else 0.0
+                    else:
+                        agent_beliefs['competence'] -= 0.1 if baseline is None else 0.0
                     if area in self._objectiveHistory.get('Found', []):
                         print("Competence increased since human said collect a victim in an area he said he found")
-                        agent_beliefs['competence'] += 0.1
+                        agent_beliefs['competence'] += 0.1 if baseline is None else 0.0
                     else:
-                        print("Competence decreased since human said collect in an area he wasn't going to search")
-                        agent_beliefs['competence'] -= 0.1
+                        print("Competence decreased since human said collect a victim he did not say he found")
+                        agent_beliefs['competence'] -= 0.1 if baseline is None else 0.0
 
                     self._objectiveHistory.get(action_type, []).append(
                         Objective(action="Rescue together", start_time=tick, area=area))
 
                 if not self._obstacle_is_tree and message == 'Remove':
                     self._aid_remove = True
-                    agent_beliefs['willingness'] += 0.2
+                    agent_beliefs['willingness'] += 0.2 if baseline is None else 0.0
                     self._objectiveHistory.setdefault(message, []).append(
                         Objective(action=message, start_time=tick, area=self._human_loc))
 
             if message == 'Rescue together' or message == 'Rescue':  # Start time for joint rescue
-                agent_beliefs['willingness'] += 0.2
+                agent_beliefs['willingness'] += 0.2 if baseline is None else 0.0
                 self._objectiveHistory.setdefault('Rescue', []).append(
                     Objective(action=message, start_time=tick, area=self._agent_loc, person=self._recent_vic))
 
             # Log alone goal: Telling the robot to complete a task alone when it could be done jointly
             if 'alone' in action_type:
                 print("Decrease willingness because alone")
-                agent_beliefs['willingness'] -= 0.1
+                agent_beliefs['willingness'] -= 0.1 if baseline is None else 0.0
 
             # Log message to ask for help when removing
             if action_type == 'Help remove':
                 print("Increase willingness because together")
-                agent_beliefs['willingness'] += 0.1
+                agent_beliefs['willingness'] += 0.1 if baseline is None else 0.0
 
             # Decrease willingness slightly when asking to continue
             if action_type == 'Continue':
                 print("Decrease willingness because continue")
-                agent_beliefs['willingness'] -= 0.05
+                agent_beliefs['willingness'] -= 0.05 if baseline is None else 0.0
 
         # Joint Removal event asked from the Robot's side
         if not self._aid_remove:
@@ -1166,9 +1182,9 @@ class BaselineAgent(ArtificialBrain):
                     objective.end_time = tick
                     threshold = self._calculate_threshold(agent_beliefs, 'remove', True)
                     if objective.end_time - objective.start_time < threshold:
-                        agent_beliefs['competence'] += 0.1
+                        agent_beliefs['competence'] += 0.1 if baseline is None else 0.0
                     else:
-                        agent_beliefs['competence'] -= 0.1
+                        agent_beliefs['competence'] -= 0.1 if baseline is None else 0.0
 
         # Joint Rescue event asked from the Robot's side
         if self._carrying_together:  # self.rescue can be together or alone, only works when robot finds a victim and asks for help OR when you ask for the robots help to rescue a victim
@@ -1176,16 +1192,18 @@ class BaselineAgent(ArtificialBrain):
                 if objective.end_time is None:
                     objective.end_time = tick
                     if tick - objective.end_time < self._calculate_threshold(agent_beliefs, 'rescue'):
-                        agent_beliefs['competence'] += 0.3 if (
-                                self._goal_vic is not None and "critical" in self._goal_vic) else 0.2
+                        if baseline is None:
+                            agent_beliefs['competence'] += 0.3 if (
+                                    self._goal_vic is not None and "critical" in self._goal_vic) else 0.2
                     else:
-                        agent_beliefs['competence'] -= 0.3 if (
-                                self._goal_vic is not None and "critical" in self._goal_vic) else 0.2
+                        if baseline is None:
+                            agent_beliefs['competence'] -= 0.3 if (
+                                    self._goal_vic is not None and "critical" in self._goal_vic) else 0.2
 
         # If all rooms have been searched but not all victims rescued -> human lies -> willingness goes down
         if self._searched_rooms == all_rooms and len(self._found_victims) < 8:
             print("All rooms have been searched but not all victims rescued -> human lies -> willingness goes down")
-            trustBeliefs[self._human_name]['willingness'] -= 0.5
+            trustBeliefs[self._human_name]['willingness'] -= 0.5 if baseline is None else 0.0
 
         # Restrict the competence and willingness belief to a range of -1 to 1
         trustBeliefs[self._human_name]['willingness'] = np.clip(trustBeliefs[self._human_name]['willingness'], -1, 1)
@@ -1246,6 +1264,32 @@ class BaselineAgent(ArtificialBrain):
         to += rock_offset
 
         return to
+
+    def _decide_to_ask_or_not(self, willingness : float, competence : float) -> bool:
+        """
+        Decides whether to ask for help when removing a rock or to do it alone
+
+        :param willingness: willingness value
+        :param competence: competence value
+
+        :returns whether to ask for help or not
+        """
+        low_willingness : bool = willingness < -0.5
+        high_competence : bool = competence > 0.6
+
+        if low_willingness and high_competence:
+            if abs(willingness) > abs(competence):
+                # If human is more unwilling than competent, do not ask
+                return False
+            else:
+                # If human is more competent than unwilling (or the same), ask
+                return True
+        elif low_willingness:
+            return False # Low willingness hence agent should not even bother to ask
+        else:
+            return True # High competence hence agent should ask for help
+
+
 
     def _send_message(self, mssg, sender):
         '''
