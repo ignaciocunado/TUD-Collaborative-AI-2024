@@ -470,7 +470,7 @@ class BaselineAgent(ArtificialBrain):
                         else:
                             if self.idle_since is not None and self._tick - self.idle_since > self._calculate_timeout(
                                     self._loadBelief(self._team_members, self._folder, baseline), 50): # Updates timeout based on expected time of removal
-                                competence -= 0.1 if baseline is None else 0.0
+                                competence -= self._calculate_competence_update(trustBeliefs, 0.1 if baseline is None else 0.0)
                                 print("UPDATE: Decreases competence because timeout exceeded")
                                 self._waiting = False
                                 self._phase = Phase.FIND_NEXT_GOAL
@@ -584,7 +584,7 @@ class BaselineAgent(ArtificialBrain):
                             if self.idle_since is not None and self._tick - self.idle_since > self._calculate_timeout(
                                     self._loadBelief(self._team_members, self._folder, baseline), 30):
                                 print("UPDATE: Decreases competence because timeout exceeded")
-                                competence -= 0.1 if baseline is None else 0.0 # Reduce competence since it took to much time to do action
+                                competence -= self._calculate_competence_update(trustBeliefs, 0.1 if baseline is None else 0.0) # Reduce competence since it took to much time to do action
                                 self.idle_since = None
                                 self._answered = True
                                 self._waiting = False
@@ -721,7 +721,7 @@ class BaselineAgent(ArtificialBrain):
                     self._send_message(self._goal_vic + ' not present in ' + str(self._door[
                                                                                      'room_name']) + ' because I searched the whole area without finding ' + self._goal_vic + '.',
                                        'RescueBot')
-                    willingness -= 0.15 if baseline is None else 0.0
+                    willingness -= self._calculate_willingness_update(trustBeliefs, 0.15 if baseline is None else 0.0)
                     # Remove the victim location from memory
                     self._found_victim_logs.pop(self._goal_vic, None)
                     self._found_victims.remove(self._goal_vic)
@@ -738,8 +738,8 @@ class BaselineAgent(ArtificialBrain):
                     self._rescue = 'together'
                     self._answered = True
                     self._waiting = False
-                    willingness += 0.02 # Adjust willingness since a critical victim is being rescued
-                    competence += 0.05 # Adjust competence since a victim is being rescued together
+                    willingness += self._calculate_willingness_update(trustBeliefs, 0.02)
+                    competence += self._calculate_competence_update(trustBeliefs, 0.05)
                     print("UPDATE: Willingness and Competence increase because a critical victim is rescued together")
                     # Tell the human to come over and help carry the critically injured victim
                     if not state[{'is_human_agent': True}]:
@@ -759,8 +759,8 @@ class BaselineAgent(ArtificialBrain):
                     self._rescue = 'together'
                     self._answered = True
                     self._waiting = False
-                    willingness += 0.05  # Adjust willingness since a critical victim is being rescued
-                    competence += 0.05
+                    willingness += self._calculate_willingness_update(trustBeliefs, 0.05)
+                    competence += self._calculate_competence_update(trustBeliefs, 0.05)
                     print("UPDATE: Willingness and Competence increase because a mildly injured victim is rescued together")
                     # Tell the human to come over and help carry the mildly injured victim
                     if not state[{'is_human_agent': True}]:
@@ -855,7 +855,7 @@ class BaselineAgent(ArtificialBrain):
                             self._moving = False
                             if self.idle_since is not None and self._tick - self.idle_since > self._calculate_timeout(
                                     self._loadBelief(self._team_members, self._folder, baseline), 0):
-                                competence -= 0.1 if baseline is None else 0.0 # Reduce competence since the timeout was exceeded
+                                competence -= self._calculate_competence_update(trustBeliefs, 0.1 if baseline is None else 0.0) # Reduce competence since the timeout was exceeded
                                 print("UPDATE: Decreases competence because timeout exceeded")
                                 self._waiting = False
                                 self._moving = True
@@ -1131,17 +1131,17 @@ class BaselineAgent(ArtificialBrain):
 
                 # Log search goal
                 if action_type == 'Search':
-                    agent_beliefs['willingness'] += 0.05 if baseline is None else 0.0
+                    agent_beliefs['willingness'] += self._calculate_willingness_update(trustBeliefs, 0.05 if baseline is None else 0.0)
                     print("UPDATE: Willingness increased since human said he is going to search area ", area)
 
                 # Log found event
                 if action_type == 'Found':
                     if any(obj.area == area for obj in self._objectiveHistory.get('Search', [])):
-                        agent_beliefs['competence'] += 0.02 if baseline is None else 0.0
+                        agent_beliefs['willingness'] += self._calculate_willingness_update(trustBeliefs, 0.02 if baseline is None else 0.0)
                         print("UPDATE: Competence increased since human said found a victim in an area he said he would search")
                     else:
                         print("UPDATE: Competence decreased since human said found in an area he wasn't going to search")
-                        agent_beliefs['competence'] -= 0.04 if baseline is None else 0.0
+                        agent_beliefs['willingness'] -= self._calculate_willingness_update(trustBeliefs, 0.08 if baseline is None else 0.0)
 
                 # Log collect goal
                 if action_type == 'Collect':
@@ -1158,11 +1158,11 @@ class BaselineAgent(ArtificialBrain):
 
                     if not any(area == obj.area for obj in self._objectiveHistory.get('Search', [])):
                         print("UPDATE: Willingness decreased since it is collecting a victim in an area he was not going to search")
-                        agent_beliefs['willingness'] -= 0.05 if baseline is None else 0.0
+                        agent_beliefs['willingness'] -= self._calculate_willingness_update(trustBeliefs, (0.05 if baseline is None else 0.0))
 
                     if not any(area == obj.area for obj in self._objectiveHistory.get('Found', [])):
                         print("UPDATE: Willingness decreased since collecting victim he did not found")
-                        agent_beliefs['willingness'] -= 0.05 if baseline is None else 0.0
+                        agent_beliefs['willingness'] -= self._calculate_willingness_update(trustBeliefs, 0.05 if baseline is None else 0.0)
 
                     self._objectiveHistory.get(action_type, []).append(
                         Objective(action="Rescue together", start_time=tick, area=area))
@@ -1186,12 +1186,12 @@ class BaselineAgent(ArtificialBrain):
             # Log message to ask for help when removing
             if action_type == 'Help remove':
                 print("UPDATE: Increase willingness because human is willing to collaborate")
-                agent_beliefs['willingness'] += 0.02 if baseline is None else 0.0
+                agent_beliefs['willingness'] += self._calculate_willingness_update(trustBeliefs, (0.02 if baseline is None else 0.0))
 
             # Decrease willingness slightly when asking to continue
             if action_type == 'Continue':
                 print("UPDATE: Decrease willingness because human told agent to delay task")
-                agent_beliefs['willingness'] -= 0.02 if baseline is None else 0.0
+                agent_beliefs['willingness'] -= self._calculate_willingness_update(trustBeliefs, (0.04 if baseline is None else 0.0))
 
         # Joint Removal event asked from the Robot's side
         if not self._aid_remove:
@@ -1201,10 +1201,10 @@ class BaselineAgent(ArtificialBrain):
                     threshold = self._calculate_threshold(agent_beliefs, 'remove', True)
                     if objective.end_time - objective.start_time < threshold:
                         print("UPDATE: Increase competence since it removes within threshold")
-                        agent_beliefs['competence'] += 0.05 if baseline is None else 0.0
+                        agent_beliefs['competence'] += self._calculate_competence_update(trustBeliefs, 0.05 if baseline is None else 0.0)
                     else:
                         print("UPDATE: Decreases competence since it removes out of threshold")
-                        agent_beliefs['competence'] -= 0.05 if baseline is None else 0.0
+                        agent_beliefs['competence'] -= self._calculate_competence_update(trustBeliefs, 0.075 if baseline is None else 0.0)
 
         # Joint Rescue event asked from the Robot's side
         if self._carrying_together:
@@ -1213,20 +1213,20 @@ class BaselineAgent(ArtificialBrain):
                     objective.end_time = tick
                     if tick - objective.end_time < self._calculate_threshold(agent_beliefs, 'rescue'):
                         if baseline is None:
-                            agent_beliefs['competence'] += 0.05
+                            agent_beliefs['competence'] += self._calculate_competence_update(trustBeliefs, 0.05)
                             agent_beliefs['willingness'] += 0.05 if (self._goal_vic is not None and "mild" in self._goal_vic) else 0.025
                             print("UPDATE: Increase both since it rescues within threshold")
                     else:
                         if baseline is None:
                             print("UPDATE: Decreases competence since it rescues out of threshold")
-                            agent_beliefs['competence'] -= 0.1 if (
-                                    self._goal_vic is not None and "critical" in self._goal_vic) else 0.05
+                            agent_beliefs['competence'] -= self._calculate_competence_update(trustBeliefs, (0.1 if (
+                                    self._goal_vic is not None and "critical" in self._goal_vic) else 0.05))
 
 
         # If all rooms have been searched but not all victims rescued -> human lies -> willingness goes down
         if self._searched_rooms == all_rooms and len(self._found_victims) < 8:
             print("UPDATE: All rooms have been searched but not all victims rescued -> human lies -> willingness goes down")
-            trustBeliefs[self._human_name]['willingness'] -= 0.3 if baseline is None else 0.0
+            trustBeliefs[self._human_name]['willingness'] -= self._calculate_willingness_update(trustBeliefs, (0.3 if baseline is None else 0.0))
 
         # Restrict the competence and willingness belief to a range of -1 to 1
         trustBeliefs[self._human_name]['willingness'] = np.clip(trustBeliefs[self._human_name]['willingness'], -1, 1)
@@ -1361,3 +1361,28 @@ class BaselineAgent(ArtificialBrain):
             else:
                 locs.append((x[i], max(y)))
         return locs
+
+    def _calculate_competence_update(self, trustBeliefs: dict[str, dict[str, float]], update: float):
+        """
+        Calculates the update size of the competence based on its current value.
+        Bigger values lead to smaller updates.
+        See _calculate_update for more information.
+        """
+        return self._calculate_update(trustBeliefs, update, 'competence')
+
+    def _calculate_willingness_update(self, trustBeliefs: dict[str, dict[str, float]], update: float):
+        """
+        Calculates the update size of the willingness based on its current value.
+        Bigger values lead to smaller updates.
+        See _calculate_update for more information.
+        """
+        return self._calculate_update(trustBeliefs, update, 'willingness')
+
+    def _calculate_update(self, trustBeliefs: dict[str, dict[str, float]], update: float, belief: str):
+        """"
+        Calculates the update size of the willingness and competence based on their current values.
+        Bigger values lead to smaller updates.
+        """
+        alpha = 0.4
+        discount = 1 - (alpha * (trustBeliefs[self._human_name][belief] ** 2))
+        return max(min(discount * update, 1), -1)
