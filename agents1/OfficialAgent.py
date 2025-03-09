@@ -56,6 +56,9 @@ class Objective:
 baseline = None # To change depending on the evaluation method
 # Can be set to "NEVER-TRUST", "ALWAYS-TRUST" or "RANDOM-TRUST"
 
+random_competence : float = float(random.uniform(-1, 1))
+random_willingness : float = float(random.uniform(-1, 1))
+
 class BaselineAgent(ArtificialBrain):
     def __init__(self, slowdown, condition, name, folder):
         super().__init__(slowdown, condition, name, folder)
@@ -200,8 +203,8 @@ class BaselineAgent(ArtificialBrain):
                 willingness = 1
                 competence = 1
             else:
-                willingness = 1 if random.uniform(0, 1) > 0.5 else -1
-                competence = 1 if random.uniform(0, 1) > 0.5 else -1
+                willingness = random_willingness
+                competence = random_competence
 
             if Phase.INTRO == self._phase:
                 # Send introduction message
@@ -472,7 +475,11 @@ class BaselineAgent(ArtificialBrain):
                         else:
                             if self.idle_since is not None and self._tick - self.idle_since > self._calculate_timeout(
                                     self._loadBelief(self._team_members, self._folder, baseline), 50): # Updates timeout based on expected time of removal
-                                competence -= self._calculate_competence_update(trustBeliefs, 0.1 if baseline is None else 0.0)
+                                competence -= self._calculate_competence_update(trustBeliefs, 0.2 if baseline is None else 0.0)
+
+                                trustBeliefs[self._human_name]["willingness"] = willingness
+                                trustBeliefs[self._human_name]['competence'] = competence
+                                self._update_csv(willingness, competence)
                                 print("UPDATE: Decreases competence because timeout exceeded")
                                 self._waiting = False
                                 self._phase = Phase.FIND_NEXT_GOAL
@@ -586,7 +593,9 @@ class BaselineAgent(ArtificialBrain):
                             if self.idle_since is not None and self._tick - self.idle_since > self._calculate_timeout(
                                     self._loadBelief(self._team_members, self._folder, baseline), 30):
                                 print("UPDATE: Decreases competence because timeout exceeded")
-                                competence -= self._calculate_competence_update(trustBeliefs, 0.1 if baseline is None else 0.0) # Reduce competence since it took to much time to do action
+                                competence -= self._calculate_competence_update(trustBeliefs, 0.2 if baseline is None else 0.0)
+                                trustBeliefs[self._human_name]['competence'] = competence
+                                self._update_csv(willingness, competence)
                                 self.idle_since = None
                                 self._answered = True
                                 self._waiting = False
@@ -724,6 +733,8 @@ class BaselineAgent(ArtificialBrain):
                                                                                      'room_name']) + ' because I searched the whole area without finding ' + self._goal_vic + '.',
                                        'RescueBot')
                     willingness -= self._calculate_willingness_update(trustBeliefs, 0.15 if baseline is None else 0.0)
+                    trustBeliefs[self._human_name]['willingness']
+                    self._update_csv(willingness, competence)
                     # Remove the victim location from memory
                     self._found_victim_logs.pop(self._goal_vic, None)
                     self._found_victims.remove(self._goal_vic)
@@ -740,8 +751,7 @@ class BaselineAgent(ArtificialBrain):
                     self._rescue = 'together'
                     self._answered = True
                     self._waiting = False
-                    willingness += self._calculate_willingness_update(trustBeliefs, 0.02)
-                    competence += self._calculate_competence_update(trustBeliefs, 0.05)
+
                     print("UPDATE: Willingness and Competence increase because a critical victim is rescued together")
                     # Tell the human to come over and help carry the critically injured victim
                     if not state[{'is_human_agent': True}]:
@@ -763,6 +773,11 @@ class BaselineAgent(ArtificialBrain):
                     self._waiting = False
                     willingness += self._calculate_willingness_update(trustBeliefs, 0.05)
                     competence += self._calculate_competence_update(trustBeliefs, 0.05)
+
+                    trustBeliefs[self._human_name]["willingness"] = willingness
+                    trustBeliefs[self._human_name]['competence'] = competence
+                    self._update_csv(willingness, competence)
+
                     print("UPDATE: Willingness and Competence increase because a mildly injured victim is rescued together")
                     # Tell the human to come over and help carry the mildly injured victim
                     if not state[{'is_human_agent': True}]:
@@ -857,7 +872,8 @@ class BaselineAgent(ArtificialBrain):
                             self._moving = False
                             if self.idle_since is not None and self._tick - self.idle_since > self._calculate_timeout(
                                     self._loadBelief(self._team_members, self._folder, baseline), 0):
-                                competence -= self._calculate_competence_update(trustBeliefs, 0.1 if baseline is None else 0.0) # Reduce competence since the timeout was exceeded
+                                competence -= self._calculate_competence_update(trustBeliefs, 0.2 if baseline is None else 0.0) # Reduce competence since the timeout was exceeded
+                                self._update_csv(competence, willingness)
                                 print("UPDATE: Decreases competence because timeout exceeded")
                                 self._waiting = False
                                 self._moving = True
@@ -1055,8 +1071,7 @@ class BaselineAgent(ArtificialBrain):
                     # Come over to help after dropping a victim that is currently being carried by the agent
                     elif self._carrying: # TODO: Check this case
                         area = 'area ' + msg.split()[-1]
-                        #self._send_message('Will come to ' + area + ' after dropping ' + self._goal_vic + '.',
-                                          # 'RescueBot')
+                        self._send_message('Will come to ' + area + ' after dropping ' + self._goal_vic + '.', 'RescueBot')
             # Store the current location of the human in memory
             if mssgs and mssgs[-1].split()[-1] in ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13',
                                                    '14']:
@@ -1085,7 +1100,7 @@ class BaselineAgent(ArtificialBrain):
             return trustBeliefs
 
         elif baseline == "RANDOM-TRUST":
-            trustBeliefs[self._human_name] = {'competence': float(random.uniform(-1, 1)), 'willingness': float(random.uniform(-1, 1))} #TODO: Use random seed
+            trustBeliefs[self._human_name] = {'competence': random_competence, 'willingness': random_willingness}
             return trustBeliefs
 
         # Set a default starting trust value
@@ -1216,7 +1231,7 @@ class BaselineAgent(ArtificialBrain):
                     if tick - objective.end_time < self._calculate_threshold(agent_beliefs, 'rescue'):
                         if baseline is None:
                             agent_beliefs['competence'] += self._calculate_competence_update(trustBeliefs, 0.05)
-                            agent_beliefs['willingness'] += 0.05 if (self._goal_vic is not None and "mild" in self._goal_vic) else 0.025
+                            agent_beliefs['willingness'] += self._calculate_willingness_update(trustBeliefs,  0.05 if (self._goal_vic is not None and "mild" in self._goal_vic) else 0.025)
                             print("UPDATE: Increase both since it rescues within threshold")
                     else:
                         if baseline is None:
@@ -1228,6 +1243,8 @@ class BaselineAgent(ArtificialBrain):
         # If all rooms have been searched but not all victims rescued -> human lies -> willingness goes down
         if self._searched_rooms == all_rooms and len(self._found_victims) < 8:
             print("UPDATE: All rooms have been searched but not all victims rescued -> human lies -> willingness goes down")
+
+
             trustBeliefs[self._human_name]['willingness'] -= self._calculate_willingness_update(trustBeliefs, (0.3 if baseline is None else 0.0))
 
         # Restrict the competence and willingness belief to a range of -1 to 1
@@ -1242,6 +1259,7 @@ class BaselineAgent(ArtificialBrain):
             csv_writer.writerow([self._human_name, trustBeliefs[self._human_name]['competence'],
                                  trustBeliefs[self._human_name]['willingness']])
 
+        self._update_csv(trustBeliefs[self._human_name]['willingness'], trustBeliefs[self._human_name]['willingness'])
         trustBeliefs[self._human_name] = agent_beliefs
 
         print("Tick: " + str(tick) + " " + str(agent_beliefs))
@@ -1390,6 +1408,15 @@ class BaselineAgent(ArtificialBrain):
         alpha = 0.4
         discount = 1 - (alpha * (trustBeliefs[self._human_name][belief] ** 2))
         return max(min(discount * update, 1), -1)
+
+    def _update_csv(self, willingness : float, competence : float):
+        """
+        Writes to csv file
+        """
+        with open(self._folder + '/beliefs/currentTrustBelief.csv', mode='w') as csv_file:
+            csv_writer = csv.writer(csv_file, delimiter=';', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+            csv_writer.writerow(['name', 'competence', 'willingness'])
+            csv_writer.writerow([self._human_name, competence, willingness])
 
     def _plot_ticks(self, save_path="trust_logs/trust_beliefs_per_tick.csv"):
         """
