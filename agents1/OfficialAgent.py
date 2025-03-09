@@ -218,7 +218,7 @@ class BaselineAgent(ArtificialBrain):
                 else:
                     return None, {}
 
-            if Phase.FIND_NEXT_GOAL == self._phase:
+            if Phase.FIND_NEXT_GOAL == self._phase: # TODO: Here
                 # Definition of some relevant variables
                 self._answered = False
                 self._goal_vic = None
@@ -301,7 +301,9 @@ class BaselineAgent(ArtificialBrain):
                     self.received_messages = []
                     self.received_messages_content = []
                     self._send_message('Going to re-search all areas.', 'RescueBot')
-                    self._phase = Phase.FIND_NEXT_GOAL
+                    print("Re-search again so willingness goes down")
+                    willingness -= 0.4
+                    self._phase = Phase.FIND_NEXT_GOAL # TODO: HERE
                 # If there are still areas to search, define which one to search next
                 else:
                     # Identify the closest door when the agent did not search any areas yet
@@ -713,6 +715,9 @@ class BaselineAgent(ArtificialBrain):
                                         self._searched_rooms).replace('area ', '') + '\n \
                                         clock - extra time when rescuing alone: 15 seconds \n afstand - distance between us: ' + self._distance_human,
                                                        'RescueBot')
+                                    if vic in self._collected_victims:
+                                        print("You lied in collecting a victim so willingness goes down")
+                                        willingness -= 0.5
                                     self._waiting = True
 
                                 if 'critical' in vic and self._answered == False and not self._waiting:
@@ -723,6 +728,9 @@ class BaselineAgent(ArtificialBrain):
                                         self._collected_victims) + '\n \
                                         afstand - distance between us: ' + self._distance_human, 'RescueBot')
                                     self._waiting = True
+                                    if vic in self._collected_victims:
+                                        print("You lied in collecting a victim so willingness goes down")
+                                        willingness -= 0.5
                                     # Execute move actions to explore the area
                     return action, {}
 
@@ -1031,9 +1039,9 @@ class BaselineAgent(ArtificialBrain):
                     if loc not in self._searched_rooms:
                         self._searched_rooms.append(loc)
                     # Add the victim and location to the memory of found victims
-                    if collectVic not in self._found_victims:
-                        self._found_victims.append(collectVic)
-                        self._found_victim_logs[collectVic] = {'room': loc}
+                    # if collectVic not in self._found_victims:
+                        # self._found_victims.append(collectVic)
+                        # self._found_victim_logs[collectVic] = {'room': loc}
                     if collectVic in self._found_victims and self._found_victim_logs[collectVic]['room'] != loc:
                         self._found_victim_logs[collectVic] = {'room': loc}
                     # Add the victim to the memory of rescued victims when the   human's condition is not weak
