@@ -479,7 +479,7 @@ class BaselineAgent(ArtificialBrain):
 
                                 trustBeliefs[self._human_name]["willingness"] = willingness
                                 trustBeliefs[self._human_name]['competence'] = competence
-                                self._update_csv(willingness, competence)
+                                self._update_csv(competence, willingness)
                                 print("UPDATE: Decreases competence because timeout exceeded")
                                 self._waiting = False
                                 self._phase = Phase.FIND_NEXT_GOAL
@@ -595,7 +595,7 @@ class BaselineAgent(ArtificialBrain):
                                 print("UPDATE: Decreases competence because timeout exceeded")
                                 competence -= self._calculate_competence_update(trustBeliefs, 0.2 if baseline is None else 0.0)
                                 trustBeliefs[self._human_name]['competence'] = competence
-                                self._update_csv(willingness, competence)
+                                self._update_csv(competence, willingness)
                                 self.idle_since = None
                                 self._answered = True
                                 self._waiting = False
@@ -733,8 +733,8 @@ class BaselineAgent(ArtificialBrain):
                                                                                      'room_name']) + ' because I searched the whole area without finding ' + self._goal_vic + '.',
                                        'RescueBot')
                     willingness -= self._calculate_willingness_update(trustBeliefs, 0.15 if baseline is None else 0.0)
-                    trustBeliefs[self._human_name]['willingness']
-                    self._update_csv(willingness, competence)
+                    trustBeliefs[self._human_name]['willingness'] = willingness
+                    self._update_csv(competence, willingness)
                     # Remove the victim location from memory
                     self._found_victim_logs.pop(self._goal_vic, None)
                     self._found_victims.remove(self._goal_vic)
@@ -776,7 +776,7 @@ class BaselineAgent(ArtificialBrain):
 
                     trustBeliefs[self._human_name]["willingness"] = willingness
                     trustBeliefs[self._human_name]['competence'] = competence
-                    self._update_csv(willingness, competence)
+                    self._update_csv(competence, willingness)
 
                     print("UPDATE: Willingness and Competence increase because a mildly injured victim is rescued together")
                     # Tell the human to come over and help carry the mildly injured victim
@@ -1259,7 +1259,7 @@ class BaselineAgent(ArtificialBrain):
             csv_writer.writerow([self._human_name, trustBeliefs[self._human_name]['competence'],
                                  trustBeliefs[self._human_name]['willingness']])
 
-        self._update_csv(trustBeliefs[self._human_name]['willingness'], trustBeliefs[self._human_name]['willingness'])
+        self._update_csv(trustBeliefs[self._human_name]['competence'], trustBeliefs[self._human_name]['willingness'])
         trustBeliefs[self._human_name] = agent_beliefs
 
         print("Tick: " + str(tick) + " " + str(agent_beliefs))
@@ -1409,7 +1409,7 @@ class BaselineAgent(ArtificialBrain):
         discount = 1 - (alpha * (trustBeliefs[self._human_name][belief] ** 2))
         return max(min(discount * update, 1), -1)
 
-    def _update_csv(self, willingness : float, competence : float):
+    def _update_csv(self, competence : float, willingness : float):
         """
         Writes to csv file
         """
