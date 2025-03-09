@@ -3,28 +3,32 @@ import pandas as pd
 import matplotlib.pyplot as plt
 matplotlib.use('TkAgg')
 
-def plot_1_run_results(csv_file : str, human_name : str):
-    # Change hard coded values per run
-    # csv_file = "../trust_logs/wilco/wilco_3_no_baseline.csv"
-    # human_name = "wilco"
+import pandas as pd
+import matplotlib.pyplot as plt
 
+def plot_1_run_results(csv_file: str, human_name: str):
     # Read the CSV using semicolon as delimiter
     df = pd.read_csv(csv_file, delimiter=';')
 
     # Get the final tick from the "tick_nr" column
     final_tick = df['tick_nr'].max()
+    print("Total number of ticks to end game:", final_tick)
 
     # Sort the DataFrame by tick_nr
     df_sorted = df.sort_values(by='tick_nr')
 
-    print("Total number of ticks to end game: ", str(final_tick))
+    # Create flags for non-empty actions, counting only when the action changes (i.e. the first occurrence)
+    df_sorted['rescuebot_action_flag'] = (
+        (df_sorted['rescuebot_action'].fillna('').astype(str).str.strip() != "") &
+        (df_sorted['rescuebot_action'].fillna('').astype(str).str.strip() !=
+         df_sorted['rescuebot_action'].fillna('').astype(str).str.strip().shift())
+    ).astype(int)
 
-    # Create flags for non-empty actions for each tick.
-    # Empty actions are treated as 0 and non-empty as 1.
-    df_sorted['rescuebot_action_flag'] = df_sorted['rescuebot_action'].apply(
-        lambda x: 1 if isinstance(x, str) and x.strip() != "" else 0)
-    df_sorted[f'{human_name}_action_flag'] = df_sorted[f'{human_name}_action'].apply(
-        lambda x: 1 if isinstance(x, str) and x.strip() != "" else 0)
+    df_sorted[f'{human_name}_action_flag'] = (
+        (df_sorted[f'{human_name}_action'].fillna('').astype(str).str.strip() != "") &
+        (df_sorted[f'{human_name}_action'].fillna('').astype(str).str.strip() !=
+         df_sorted[f'{human_name}_action'].fillna('').astype(str).str.strip().shift())
+    ).astype(int)
 
     # Group by tick_nr and sum the action flags for both actors.
     actions_per_tick = df_sorted.groupby('tick_nr', as_index=False).agg({
@@ -36,12 +40,13 @@ def plot_1_run_results(csv_file : str, human_name : str):
     actions_per_tick['rescuebot_cumsum'] = actions_per_tick['rescuebot_action_flag'].cumsum()
     actions_per_tick[f'{human_name}_cumsum'] = actions_per_tick[f'{human_name}_action_flag'].cumsum()
 
-
     print("Starting to compute number of collaborative actions")
-    # Plot number of collaborative actions
-    df_sorted['collaborative_action_flag'] = df_sorted[f'{human_name}_action'].apply(
-        lambda x: 1 if isinstance(x, str) and "Together" in x else 0
-    )
+    # Create flag for collaborative actions (actions that contain "Together") counting only once
+    df_sorted['collaborative_action_flag'] = (
+        (df_sorted[f'{human_name}_action'].fillna('').astype(str).str.contains("Together")) &
+        (df_sorted[f'{human_name}_action'].fillna('').astype(str).str.strip() !=
+         df_sorted[f'{human_name}_action'].fillna('').astype(str).str.strip().shift())
+    ).astype(int)
 
     # Group by tick and sum the collaborative_action_flag
     collab_per_tick = df_sorted.groupby('tick_nr', as_index=False)['collaborative_action_flag'].sum()
@@ -65,13 +70,12 @@ def plot_1_run_results(csv_file : str, human_name : str):
     plt.tight_layout()
     plt.show()
 
-
     # Plot the cumulative actions for each actor:
     plt.figure(figsize=(10, 6))
     plt.plot(actions_per_tick['tick_nr'], actions_per_tick['rescuebot_cumsum'],
              color='red', linestyle='-', linewidth=2, label='Rescuebot')
     plt.plot(actions_per_tick['tick_nr'], actions_per_tick[f'{human_name}_cumsum'],
-             color='blue', linestyle='-', linewidth=2, markersize=1, label=human_name.capitalize())
+             color='blue', linestyle='-', linewidth=2, label=human_name.capitalize())
     plt.xlabel('Tick Number')
     plt.ylabel('Cumulative Number of Actions')
     plt.title('Cumulative Actions per Tick')
@@ -80,13 +84,13 @@ def plot_1_run_results(csv_file : str, human_name : str):
     plt.tight_layout()
     plt.show()
 
+    # Prepare time series data to return:
     rescuebot_ts = actions_per_tick[['tick_nr', 'rescuebot_cumsum']].copy()
-    # 2) Human cumulative actions
     human_ts = actions_per_tick[['tick_nr', f'{human_name}_cumsum']].copy()
-    # 3) Collaborative actions
     collab_ts = collab_per_tick[['tick_nr', 'collab_cumsum']].copy()
 
     return rescuebot_ts, human_ts, collab_ts
+
 
 def plot_combined_results():
     """
@@ -99,6 +103,7 @@ def plot_combined_results():
         ("../trust_logs/wilco/wilco_3_no_baseline.csv", "No Baseline Third Round"),
         ("../trust_logs/wilco/wilco_baseline_always_trust.csv", "Always Trust Baseline"),
         ("../trust_logs/wilco/wilco_baseline_never_trust.csv", "Never Trust Baseline"),
+        ("../trust_logs/wilco/wilco_baseline_random_trust.csv", "Random Trust Baseline")
     ]
 
     # Lists to store time series data from each run
