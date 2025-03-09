@@ -303,6 +303,7 @@ class BaselineAgent(ArtificialBrain):
                     self._send_message('Going to re-search all areas.', 'RescueBot')
                     print("Re-search again so willingness goes down")
                     willingness -= 0.4
+                    self._update_csv(competence, willingness)
                     self._phase = Phase.FIND_NEXT_GOAL # TODO: HERE
                 # If there are still areas to search, define which one to search next
                 else:
@@ -718,6 +719,7 @@ class BaselineAgent(ArtificialBrain):
                                     if vic in self._collected_victims:
                                         print("You lied in collecting a victim so willingness goes down")
                                         willingness -= 0.5
+                                        self._update_csv(competence, willingness)
                                     self._waiting = True
 
                                 if 'critical' in vic and self._answered == False and not self._waiting:
@@ -731,6 +733,7 @@ class BaselineAgent(ArtificialBrain):
                                     if vic in self._collected_victims:
                                         print("You lied in collecting a victim so willingness goes down")
                                         willingness -= 0.5
+                                        self._update_csv(competence, willingness)
                                     # Execute move actions to explore the area
                     return action, {}
 
